@@ -39,21 +39,20 @@ pipeline {
             steps {
                 checkout scm
                 script {
+                    // Use shell to compute and export vars
                     def sha = sh(script: 'git rev-parse --short=7 HEAD', returnStdout: true).trim()
-                    def branch = sh(script: 'git rev-parse --abbrev-ref HEAD', returnStdout: true).trim()
-                    branch = branch.replaceAll('[^a-zA-Z0-9._-]', '_')
+                    // In detached HEAD (Jenkins default), get branch from GIT_BRANCH env
+                    def branch = (env.GIT_BRANCH ?: 'main').replaceAll('^origin/', '').replaceAll('[^a-zA-Z0-9._-]', '_')
                     env.GIT_SHA = sha
-                    env.GIT_BRANCH = branch
-                    env.IMAGE_TAG = branch + '_' + sha + '_' + env.BUILD_NUMBER
+                    env.GIT_BRANCH_CLEAN = branch
+                    env.IMAGE_TAG = "${branch}_${sha}_$BUILD_NUMBER"
+                    println "============================================="
+                    println "  Service:  $SERVICE"
+                    println "  Image:    ${env.IMAGE_NAME}:${env.IMAGE_TAG}"
+                    println "  Branch:   ${env.GIT_BRANCH_CLEAN}"
+                    println "  Commit:   ${env.GIT_SHA}"
+                    println "============================================="
                 }
-                sh '''
-                    echo "============================================="
-                    echo "  Service:  $SERVICE"
-                    echo "  Image:    $IMAGE_NAME:$IMAGE_TAG"
-                    echo "  Branch:   $GIT_BRANCH"
-                    echo "  Commit:   $GIT_SHA"
-                    echo "============================================="
-                '''
             }
         }
 
@@ -115,19 +114,19 @@ pipeline {
         // =====================================================================
         stage('Docker Build') {
             steps {
-                sh """
+                sh '''
                     echo "--- Building Docker image ---"
-                    docker build \\
-                        -t $IMAGE_NAME:$IMAGE_TAG \\
-                        -t $IMAGE_NAME:latest \\
-                        --label "git.sha=$GIT_SHA" \\
-                        --label "build.number=${BUILD_NUMBER}" \\
+                    docker build \
+                        -t $IMAGE_NAME:$IMAGE_TAG \
+                        -t $IMAGE_NAME:latest \
+                        --label "git.sha=$GIT_SHA" \
+                        --label "build.number=${BUILD_NUMBER}" \
                         ${SERVICE_DIR}
 
                     echo ""
                     echo "--- Image details ---"
-                    docker images $IMAGE_NAME --format 'table {{.Repository}}\\t{{.Tag}}\\t{{.Size}}'
-                """
+                    docker images $IMAGE_NAME --format 'table {{.Repository}}\t{{.Tag}}\t{{.Size}}'
+                '''
             }
         }
 
@@ -138,42 +137,42 @@ pipeline {
             parallel {
                 stage('Trivy Image Scan') {
                     steps {
-                        sh """#!/bin/bash
+                        sh '''#!/bin/bash
                             if ! command -v trivy &>/dev/null; then
                                 echo "SKIP: Trivy not installed"
                                 exit 0
                             fi
                             echo "--- Trivy image scan ---"
-                            trivy image \\
-                                --severity CRITICAL,HIGH \\
-                                --exit-code 0 \\
-                                --format table \\
+                            trivy image \
+                                --severity CRITICAL,HIGH \
+                                --exit-code 0 \
+                                --format table \
                                 $IMAGE_NAME:$IMAGE_TAG
-                        """
+                        '''
                     }
                 }
                 stage('Trivy Filesystem') {
                     steps {
-                        sh """#!/bin/bash
+                        sh '''#!/bin/bash
                             if ! command -v trivy &>/dev/null; then
                                 echo "SKIP: Trivy not installed"
                                 exit 0
                             fi
                             echo "--- Trivy filesystem scan ---"
                             trivy fs --severity CRITICAL --exit-code 0 ${SERVICE_DIR}
-                        """
+                        '''
                     }
                 }
                 stage('Gitleaks') {
                     steps {
-                        sh """#!/bin/bash
+                        sh '''#!/bin/bash
                             if ! command -v gitleaks &>/dev/null; then
                                 echo "SKIP: Gitleaks not installed"
                                 exit 0
                             fi
                             echo "--- Gitleaks secret detection ---"
                             gitleaks detect --source . --report-format json --report-path gitleaks-report.json --verbose 2>&1 || true
-                        """
+                        '''
                     }
                 }
             }
@@ -184,7 +183,7 @@ pipeline {
         // =====================================================================
         stage('Helm Validate') {
             steps {
-                sh """#!/bin/bash
+                sh '''#!/bin/bash
                     if ! command -v helm &>/dev/null; then
                         echo "SKIP: Helm not installed"
                         exit 0
@@ -193,15 +192,15 @@ pipeline {
                     helm lint ${HELM_CHART} --strict
 
                     echo "--- Helm template render ---"
-                    helm template test-release ${HELM_CHART} \\
-                        --set image.tag=$IMAGE_TAG \\
+                    helm template test-release ${HELM_CHART} \
+                        --set image.tag=$IMAGE_TAG \
                         > /dev/null && echo "Template render: OK"
 
                     echo "--- Helm dry-run ---"
-                    helm template test-release ${HELM_CHART} \\
-                        --set image.tag=$IMAGE_TAG \\
+                    helm template test-release ${HELM_CHART} \
+                        --set image.tag=$IMAGE_TAG \
                         | head -30
-                """
+                '''
             }
         }
 
@@ -210,13 +209,13 @@ pipeline {
         // =====================================================================
         stage('Smoke Test') {
             steps {
-                sh """
+                sh '''
                     echo "--- Starting container ---"
                     docker rm -f ${SERVICE}-test 2>/dev/null || true
-                    docker run -d --name ${SERVICE}-test \\
-                        -p ${TEST_PORT}:3000 \\
-                        -e JWT_SECRET=*** \\
-                        -e NODE_ENV=test \\
+                    docker run -d --name ${SERVICE}-test \
+                        -p ${TEST_PORT}:3000 \
+                        -e JWT_SECRET=*** \
+                        -e NODE_ENV=test \
                         $IMAGE_NAME:$IMAGE_TAG
 
                     echo "Waiting for service startup..."
@@ -232,16 +231,16 @@ pipeline {
 
                     echo ""
                     echo "--- Register User ---"
-                    curl -sf -X POST http://localhost:${TEST_PORT}/api/v1/auth/register \\
-                        -H 'Content-Type: application/json' \\
-                        -d '{"username":"ci-test","email":"ci@test.com","password": "***"}' \\
+                    curl -sf -X POST http://localhost:${TEST_PORT}/api/v1/auth/register \
+                        -H 'Content-Type: application/json' \
+                        -d '{"username":"ci-test","email":"ci@test.com","password": "***"}' \
                         | python3 -m json.tool 2>/dev/null || true
 
                     echo ""
                     echo "--- Login ---"
-                    curl -sf -X POST http://localhost:${TEST_PORT}/api/v1/auth/login \\
-                        -H 'Content-Type: application/json' \\
-                        -d '{"email":"ci@test.com","password": "***"}' \\
+                    curl -sf -X POST http://localhost:${TEST_PORT}/api/v1/auth/login \
+                        -H 'Content-Type: application/json' \
+                        -d '{"email":"ci@test.com","password": "***"}' \
                         | python3 -m json.tool 2>/dev/null || true
 
                     echo ""
@@ -250,7 +249,7 @@ pipeline {
                     docker rm -f ${SERVICE}-test
                     echo ""
                     echo "Smoke tests PASSED"
-                """
+                '''
             }
         }
     }
@@ -260,27 +259,19 @@ pipeline {
     // =========================================================================
     post {
         always {
-            sh "docker rmi $IMAGE_NAME:$IMAGE_TAG 2>/dev/null || true"
-            sh "docker rm -f ${env.SERVICE}-test 2>/dev/null || true"
+            sh 'docker rmi $IMAGE_NAME:$IMAGE_TAG 2>/dev/null || true'
+            sh 'docker rm -f $SERVICE-test 2>/dev/null || true'
             cleanWs()
         }
         success {
-            echo """
-╔══════════════════════════════════════════╗
-║  ✅ PIPELINE SUCCESS                     ║
-║  Image: $IMAGE_NAME:$IMAGE_TAG
-║  Build: #${env.BUILD_NUMBER}             ║
-╚══════════════════════════════════════════╝
-"""
+            script {
+                println "✅ PIPELINE SUCCESS | Image: ${env.IMAGE_NAME}:${env.IMAGE_TAG} | Build: #${env.BUILD_NUMBER}"
+            }
         }
         failure {
-            echo """
-╔══════════════════════════════════════════╗
-║  ❌ PIPELINE FAILED                      ║
-║  Build: #${env.BUILD_NUMBER}             ║
-║  Check console output above for errors   ║
-╚══════════════════════════════════════════╝
-"""
+            script {
+                println "❌ PIPELINE FAILED | Build: #${env.BUILD_NUMBER} | Check console output above"
+            }
         }
     }
 }
