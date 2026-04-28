@@ -250,16 +250,16 @@ pipeline {
     // =========================================================================
     post {
         always {
-            sh "docker rmi ${IMAGE_NAME}:${IMAGE_TAG} 2>/dev/null || true"
-            sh "docker rm -f ${SERVICE}-test 2>/dev/null || true"
+            sh "docker rmi ${env.IMAGE_NAME}:${env.IMAGE_TAG} 2>/dev/null || true"
+            sh "docker rm -f ${env.SERVICE}-test 2>/dev/null || true"
             cleanWs()
         }
         success {
             echo """
 ╔══════════════════════════════════════════╗
 ║  ✅ PIPELINE SUCCESS                     ║
-║  Image: ${IMAGE_NAME}:${IMAGE_TAG}
-║  Build: #${BUILD_NUMBER}                 ║
+║  Image: ${env.IMAGE_NAME}:${env.IMAGE_TAG}
+║  Build: #${env.BUILD_NUMBER}             ║
 ╚══════════════════════════════════════════╝
 """
         }
@@ -267,7 +267,7 @@ pipeline {
             echo """
 ╔══════════════════════════════════════════╗
 ║  ❌ PIPELINE FAILED                      ║
-║  Build: #${BUILD_NUMBER}                 ║
+║  Build: #${env.BUILD_NUMBER}             ║
 ║  Check console output above for errors   ║
 ╚══════════════════════════════════════════╝
 """
