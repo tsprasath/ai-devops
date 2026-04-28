@@ -39,9 +39,9 @@ pipeline {
                     env.IMAGE_TAG = "${env.GIT_SHA}-${BUILD_NUMBER}"
                     echo "============================================="
                     echo "  Service:  ${SERVICE}"
-                    echo "  Image:    ${IMAGE_NAME}:${IMAGE_TAG}"
+                    echo "  Image:    ${env.IMAGE_NAME}:${env.IMAGE_TAG}"
                     echo "  Branch:   ${sh(script: 'git branch --show-current', returnStdout: true).trim()}"
-                    echo "  Commit:   ${GIT_SHA}"
+                    echo "  Commit:   ${env.GIT_SHA}"
                     echo "============================================="
                 }
             }
