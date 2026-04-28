@@ -41,19 +41,19 @@ pipeline {
                 script {
                     def sha = sh(script: 'git rev-parse --short=7 HEAD', returnStdout: true).trim()
                     def branch = sh(script: 'git rev-parse --abbrev-ref HEAD', returnStdout: true).trim()
-                    // Sanitize branch name: replace / with _ for tag safety
                     branch = branch.replaceAll('[^a-zA-Z0-9._-]', '_')
                     env.GIT_SHA = sha
                     env.GIT_BRANCH = branch
-                    // Tag format: branch_SHA_buildNumber  e.g. release-4.5.0_RC3_68b1eaa_23
                     env.IMAGE_TAG = branch + '_' + sha + '_' + env.BUILD_NUMBER
-                    echo "============================================="
-                    echo "  Service:  ${SERVICE}"
-                    echo "  Image:    ${env.IMAGE_NAME}:${env.IMAGE_TAG}"
-                    echo "  Branch:   ${env.GIT_BRANCH}"
-                    echo "  Commit:   ${env.GIT_SHA}"
-                    echo "============================================="
                 }
+                sh '''
+                    echo "============================================="
+                    echo "  Service:  $SERVICE"
+                    echo "  Image:    $IMAGE_NAME:$IMAGE_TAG"
+                    echo "  Branch:   $GIT_BRANCH"
+                    echo "  Commit:   $GIT_SHA"
+                    echo "============================================="
+                '''
             }
         }
 
@@ -118,15 +118,15 @@ pipeline {
                 sh """
                     echo "--- Building Docker image ---"
                     docker build \\
-                        -t ${env.IMAGE_NAME}:${env.IMAGE_TAG} \\
-                        -t ${env.IMAGE_NAME}:latest \\
-                        --label "git.sha=${env.GIT_SHA}" \\
+                        -t $IMAGE_NAME:$IMAGE_TAG \\
+                        -t $IMAGE_NAME:latest \\
+                        --label "git.sha=$GIT_SHA" \\
                         --label "build.number=${BUILD_NUMBER}" \\
                         ${SERVICE_DIR}
 
                     echo ""
                     echo "--- Image details ---"
-                    docker images ${env.IMAGE_NAME} --format 'table {{.Repository}}\\t{{.Tag}}\\t{{.Size}}'
+                    docker images $IMAGE_NAME --format 'table {{.Repository}}\\t{{.Tag}}\\t{{.Size}}'
                 """
             }
         }
@@ -148,7 +148,7 @@ pipeline {
                                 --severity CRITICAL,HIGH \\
                                 --exit-code 0 \\
                                 --format table \\
-                                ${env.IMAGE_NAME}:${env.IMAGE_TAG}
+                                $IMAGE_NAME:$IMAGE_TAG
                         """
                     }
                 }
@@ -194,12 +194,12 @@ pipeline {
 
                     echo "--- Helm template render ---"
                     helm template test-release ${HELM_CHART} \\
-                        --set image.tag=${env.IMAGE_TAG} \\
+                        --set image.tag=$IMAGE_TAG \\
                         > /dev/null && echo "Template render: OK"
 
                     echo "--- Helm dry-run ---"
                     helm template test-release ${HELM_CHART} \\
-                        --set image.tag=${env.IMAGE_TAG} \\
+                        --set image.tag=$IMAGE_TAG \\
                         | head -30
                 """
             }
@@ -215,9 +215,9 @@ pipeline {
                     docker rm -f ${SERVICE}-test 2>/dev/null || true
                     docker run -d --name ${SERVICE}-test \\
                         -p ${TEST_PORT}:3000 \\
-                        -e JWT_SECRET=ci-tes...-key \\
+                        -e JWT_SECRET=*** \\
                         -e NODE_ENV=test \\
-                        ${env.IMAGE_NAME}:${env.IMAGE_TAG}
+                        $IMAGE_NAME:$IMAGE_TAG
 
                     echo "Waiting for service startup..."
                     sleep 4
@@ -260,7 +260,7 @@ pipeline {
     // =========================================================================
     post {
         always {
-            sh "docker rmi ${env.IMAGE_NAME}:${env.IMAGE_TAG} 2>/dev/null || true"
+            sh "docker rmi $IMAGE_NAME:$IMAGE_TAG 2>/dev/null || true"
             sh "docker rm -f ${env.SERVICE}-test 2>/dev/null || true"
             cleanWs()
         }
@@ -268,7 +268,7 @@ pipeline {
             echo """
 ╔══════════════════════════════════════════╗
 ║  ✅ PIPELINE SUCCESS                     ║
-║  Image: ${env.IMAGE_NAME}:${env.IMAGE_TAG}
+║  Image: $IMAGE_NAME:$IMAGE_TAG
 ║  Build: #${env.BUILD_NUMBER}             ║
 ╚══════════════════════════════════════════╝
 """
