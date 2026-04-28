@@ -94,7 +94,7 @@ pipeline {
                 dir("${SERVICE_DIR}") {
                     sh '''#!/bin/bash
                         echo "--- Running Jest ---"
-                        npx jest --forceExit --detectOpenHandles --coverage --verbose 2>&1
+                                ./node_modules/.bin/jest --forceExit --detectOpenHandles --coverage --verbose 2>&1
                     '''
                 }
             }
