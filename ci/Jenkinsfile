@@ -1,22 +1,45 @@
+// =============================================================================
+// Jenkinsfile — Production Pipeline (K8s/OKE Agent)
+// =============================================================================
+// Requires:
+//   - Jenkins shared library 'diksha-dev-lib' configured (ci/shared-lib)
+//   - Credentials: ocir-credentials, git-credentials, teams-webhook-url
+//   - K8s cloud configured in Jenkins (OKE cluster)
+//   - Trivy, Gitleaks, Helm available in pod containers
+// =============================================================================
+
+@Library('diksha-dev-lib') _
+
+import org.dev.Constants
+
 pipeline {
     agent {
         kubernetes {
             yaml '''
 apiVersion: v1
 kind: Pod
+metadata:
+  labels:
+    jenkins: worker
 spec:
+  serviceAccountName: jenkins
   containers:
   - name: docker
     image: docker:24-dind
     securityContext:
       privileged: true
     volumeMounts:
-    - name: docker-sock
-      mountPath: /var/run/docker.sock
+    - name: docker-graph
+      mountPath: /var/lib/docker
+    resources:
+      requests: { cpu: "500m", memory: "1Gi" }
+      limits:   { cpu: "2",    memory: "4Gi" }
   - name: node
     image: node:20-alpine
     command: ['sleep']
     args: ['infinity']
+    resources:
+      requests: { cpu: "250m", memory: "512Mi" }
   - name: trivy
     image: aquasec/trivy:latest
     command: ['sleep']
@@ -25,132 +48,312 @@ spec:
     image: zricethezav/gitleaks:latest
     command: ['sleep']
     args: ['infinity']
+  - name: helm
+    image: alpine/helm:3.14.0
+    command: ['sleep']
+    args: ['infinity']
   - name: yq
     image: mikefarah/yq:4
     command: ['sleep']
     args: ['infinity']
   volumes:
-  - name: docker-sock
+  - name: docker-graph
     emptyDir: {}
 '''
         }
     }
 
     environment {
-        OCIR_REPO    = credentials('ocir-repo')
-        OCI_REGION   = credentials('oci-region')
-        GITOPS_REPO  = credentials('gitops-repo')
-        IMAGE_TAG    = "${GIT_COMMIT[0..6]}-${BUILD_NUMBER}"
-        IMAGE_NAME   = "${OCI_REGION}.ocir.io/${OCIR_REPO}/auth-service"
+        // -- Image config --
+        OCI_REGION   = Constants.OCI_REGION
+        OCIR_URL     = Constants.OCIR_URL
+        OCIR_NS      = Constants.OCIR_NAMESPACE
+        PROJECT      = Constants.PROJECT_NAME
+        SERVICE      = 'auth-service'
+        SERVICE_DIR  = 'services/auth-service'
+        HELM_CHART   = "infra/helm-charts/${SERVICE}"
+
+        // -- Derived --
+        IMAGE_NAME   = "${OCIR_URL}/${OCIR_NS}/${PROJECT}/${SERVICE}"
+        GIT_SHA      = sh(script: 'git rev-parse --short=7 HEAD', returnStdout: true).trim()
+        IMAGE_TAG    = "${GIT_SHA}-${BUILD_NUMBER}"
+
+        // -- Credentials --
+        OCIR_CRED_ID = Constants.OCIR_CREDENTIALS_ID
     }
 
     options {
         timeout(time: 30, unit: 'MINUTES')
         disableConcurrentBuilds()
-        buildDiscarder(logRotator(numToKeepStr: '10'))
+        buildDiscarder(logRotator(numToKeepStr: '20'))
+        timestamps()
+        ansiColor('xterm')
     }
 
     stages {
+        // =====================================================================
+        // 1. CHECKOUT
+        // =====================================================================
         stage('Checkout') {
             steps {
                 checkout scm
+                script {
+                    env.GIT_SHA = sh(script: 'git rev-parse --short=7 HEAD', returnStdout: true).trim()
+                    env.IMAGE_TAG = "${env.GIT_SHA}-${BUILD_NUMBER}"
+                    echo "Building: ${IMAGE_NAME}:${IMAGE_TAG}"
+                    echo "Branch:   ${env.GIT_BRANCH ?: env.BRANCH_NAME ?: 'unknown'}"
+                    echo "Commit:   ${env.GIT_SHA}"
+                }
             }
         }
 
-        stage('Lint') {
+        // =====================================================================
+        // 2. CODE QUALITY (parallel: lint + audit + sonar)
+        // =====================================================================
+        stage('Code Quality') {
             steps {
                 container('node') {
-                    sh 'npm ci'
-                    sh 'npm run lint'
+                    dir("${SERVICE_DIR}") {
+                        codeQualityScan(
+                            reportDir: 'code-quality-reports',
+                            failOnAudit: false,
+                            auditLevel: 'critical'
+                        )
+                    }
                 }
             }
         }
 
-        stage('Build Docker Image') {
-            steps {
-                container('docker') {
-                    sh "docker build -t ${IMAGE_NAME}:${IMAGE_TAG} -f Dockerfile ."
-                }
-            }
-        }
-
+        // =====================================================================
+        // 3. UNIT TESTS
+        // =====================================================================
         stage('Unit Tests') {
             steps {
-                container('docker') {
-                    sh "docker run --rm ${IMAGE_NAME}:${IMAGE_TAG} npm test"
+                container('node') {
+                    dir("${SERVICE_DIR}") {
+                        sh 'npm ci --no-audit'
+                        sh 'npx jest --forceExit --detectOpenHandles --coverage --ci --reporters=default --reporters=jest-junit'
+                    }
+                }
+            }
+            post {
+                always {
+                    junit allowEmptyResults: true, testResults: "${SERVICE_DIR}/junit.xml"
+                    publishHTML(target: [
+                        reportName: 'Coverage Report',
+                        reportDir: "${SERVICE_DIR}/coverage/lcov-report",
+                        reportFiles: 'index.html',
+                        keepAll: true
+                    ])
                 }
             }
         }
 
-        stage('Security Scan') {
+        // =====================================================================
+        // 4. DOCKER BUILD
+        // =====================================================================
+        stage('Docker Build') {
+            steps {
+                container('docker') {
+                    dockerBuild(
+                        imageName: "${SERVICE}",
+                        dockerfile: "${SERVICE_DIR}/Dockerfile",
+                        context: "${SERVICE_DIR}",
+                        registry: "${OCIR_URL}/${OCIR_NS}/${PROJECT}"
+                    )
+                }
+            }
+        }
+
+        // =====================================================================
+        // 5. SECURITY SCANS (parallel: Trivy image + Trivy IaC + Gitleaks)
+        // =====================================================================
+        stage('Security Scans') {
             parallel {
-                stage('Trivy Image Scan') {
+                stage('Trivy Image + IaC') {
                     steps {
                         container('trivy') {
-                            sh """
-                                trivy image \
-                                    --config security/scan-configs/trivy.yaml \
-                                    --exit-code 1 \
-                                    --severity CRITICAL \
-                                    --output trivy-report.json \
-                                    ${IMAGE_NAME}:${IMAGE_TAG}
-                            """
-                            archiveArtifacts artifacts: 'trivy-report.json', allowEmptyArchive: true
+                            trivyScan(
+                                image: "${IMAGE_NAME}:${IMAGE_TAG}",
+                                scanFilesystem: true,
+                                scanIaC: true,
+                                iacPaths: ['infra/terraform', "infra/helm-charts/${SERVICE}"],
+                                failOnCritical: true,
+                                failOnHigh: false,
+                                reportDir: 'trivy-reports'
+                            )
+                        }
+                    }
+                    post {
+                        always {
+                            archiveArtifacts artifacts: 'trivy-reports/**', allowEmptyArchive: true
                         }
                     }
                 }
                 stage('Secret Detection') {
                     steps {
                         container('gitleaks') {
-                            sh 'gitleaks detect --source . --config security/scan-configs/.gitleaks.toml --report-format json --report-path gitleaks-report.json'
-                            archiveArtifacts artifacts: 'gitleaks-report.json', allowEmptyArchive: true
+                            gitleaksScan(
+                                reportDir: 'gitleaks-reports',
+                                failOnFindings: true
+                            )
+                        }
+                    }
+                    post {
+                        always {
+                            archiveArtifacts artifacts: 'gitleaks-reports/**', allowEmptyArchive: true
                         }
                     }
                 }
             }
         }
 
+        // =====================================================================
+        // 6. HELM VALIDATION
+        // =====================================================================
+        stage('Helm Validate') {
+            steps {
+                container('helm') {
+                    helmLint(
+                        chartPath: "${HELM_CHART}",
+                        strict: true,
+                        kubeVersion: '1.28.0',
+                        reportDir: 'helm-reports'
+                    )
+                }
+            }
+            post {
+                always {
+                    archiveArtifacts artifacts: 'helm-reports/**', allowEmptyArchive: true
+                }
+            }
+        }
+
+        // =====================================================================
+        // 7. PUSH TO OCIR
+        // =====================================================================
         stage('Push to OCIR') {
+            when {
+                anyOf {
+                    branch 'main'
+                    branch 'develop'
+                    branch pattern: 'release/*', comparator: 'GLOB'
+                }
+            }
             steps {
                 container('docker') {
-                    withCredentials([usernamePassword(credentialsId: 'ocir-credentials', usernameVariable: 'OCIR_USER', passwordVariable: 'OCIR_TOKEN')]) {
-                        sh "echo ${OCIR_TOKEN} | docker login ${OCI_REGION}.ocir.io -u ${OCIR_USER} --password-stdin"
-                        sh "docker push ${IMAGE_NAME}:${IMAGE_TAG}"
+                    buildAndPush(
+                        imageName: "${PROJECT}/${SERVICE}",
+                        imageTag: "${IMAGE_TAG}",
+                        registry: "${OCIR_URL}/${OCIR_NS}",
+                        credentialsId: "${OCIR_CRED_ID}"
+                    )
+                }
+            }
+        }
+
+        // =====================================================================
+        // 8. GITOPS UPDATE (triggers ArgoCD sync)
+        // =====================================================================
+        stage('GitOps Update') {
+            when {
+                branch 'main'
+            }
+            steps {
+                container('yq') {
+                    gitopsUpdate(
+                        gitopsRepo: 'github.com/tsprasath/diksha-gitops.git',
+                        imageTag: "${IMAGE_TAG}",
+                        valuesFile: 'apps/auth-service/environments/dev/values.yaml',
+                        yamlPath: '.image.tag',
+                        serviceName: "${SERVICE}",
+                        credentialsId: 'git-credentials'
+                    )
+                }
+            }
+        }
+
+        // =====================================================================
+        // 9. SMOKE TEST (dev environment)
+        // =====================================================================
+        stage('Smoke Test') {
+            when {
+                branch 'main'
+            }
+            steps {
+                script {
+                    echo "Waiting for ArgoCD sync..."
+                    sleep(time: 30, unit: 'SECONDS')
+
+                    def healthUrl = "https://dev-api.diksha.gov.in/${SERVICE}/health"
+                    def retries = 5
+                    def success = false
+
+                    for (int i = 0; i < retries; i++) {
+                        def status = sh(
+                            script: "curl -sf -o /dev/null -w '%{http_code}' ${healthUrl} || echo '000'",
+                            returnStdout: true
+                        ).trim()
+                        if (status == '200') {
+                            success = true
+                            echo "Health check passed on attempt ${i + 1}"
+                            break
+                        }
+                        echo "Attempt ${i + 1}/${retries}: got ${status}, retrying in 10s..."
+                        sleep(time: 10, unit: 'SECONDS')
+                    }
+
+                    if (!success) {
+                        unstable("Smoke test failed after ${retries} attempts")
                     }
                 }
             }
         }
 
-        stage('GitOps Update') {
+        // =====================================================================
+        // 10. PROMOTE TO STAGING (manual gate)
+        // =====================================================================
+        stage('Promote to Staging') {
+            when {
+                branch 'main'
+            }
             steps {
                 container('yq') {
-                    withCredentials([usernamePassword(credentialsId: 'git-credentials', usernameVariable: 'GIT_USER', passwordVariable: 'GIT_TOKEN')]) {
-                        sh """
-                            git clone https://${GIT_USER}:${GIT_TOKEN}@${GITOPS_REPO} gitops-repo
-                            cd gitops-repo
-                            yq e '.image.tag = "${IMAGE_TAG}"' -i environments/dev/values.yaml
-                            git config user.email "jenkins@ci.local"
-                            git config user.name "Jenkins CI"
-                            git add .
-                            git commit -m "chore: update auth-service image to ${IMAGE_TAG}"
-                            git push origin main
-                        """
-                    }
+                    promoteToProd(
+                        gitopsRepo: 'github.com/tsprasath/diksha-gitops.git',
+                        imageTag: "${IMAGE_TAG}",
+                        appName: "${SERVICE}",
+                        // Override to staging (prod promotion is separate)
+                        smokeTestUrl: "https://staging-api.diksha.gov.in/${SERVICE}/health",
+                        approvers: 'prasath,admin',
+                        timeoutMinutes: 60
+                    )
                 }
             }
         }
     }
 
+    // =========================================================================
+    // POST ACTIONS
+    // =========================================================================
     post {
-        failure {
-            script {
-                notifyTeam(status: 'FAILURE', channel: '#dev-alerts')
-            }
-        }
         success {
-            script {
-                notifyTeam(status: 'SUCCESS', channel: '#dev-alerts')
-            }
+            notifyTeam(
+                status: 'SUCCESS',
+                channel: '#dev-builds'
+            )
+        }
+        failure {
+            notifyTeam(
+                status: 'FAILURE',
+                channel: '#dev-alerts'
+            )
+        }
+        unstable {
+            notifyTeam(
+                status: 'UNSTABLE',
+                channel: '#dev-alerts'
+            )
         }
         always {
             cleanWs()

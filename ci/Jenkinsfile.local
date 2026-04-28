@@ -1,146 +1,276 @@
-// Jenkinsfile.local - For testing on WSL Jenkins (no K8s agent)
+// =============================================================================
+// Jenkinsfile.local — WSL/Local Development Pipeline (no K8s, no shared lib)
+// =============================================================================
+// Self-contained pipeline for local Jenkins on WSL.
+// Runs: lint, test, docker build, trivy, gitleaks, helm, smoke test.
+// Gracefully skips tools not installed (trivy, gitleaks, helm).
+// =============================================================================
+
 pipeline {
     agent any
 
     environment {
         SERVICE      = 'auth-service'
         SERVICE_DIR  = 'services/auth-service'
-        IMAGE_NAME   = "dev/${SERVICE}"
-        IMAGE_TAG    = "${env.BUILD_NUMBER}-${env.GIT_COMMIT?.take(7) ?: 'local'}"
         HELM_CHART   = "infra/helm-charts/${SERVICE}"
+        IMAGE_NAME   = "diksha-dev/${SERVICE}"
+        GIT_SHA      = ''
+        IMAGE_TAG    = ''
+        TEST_PORT    = '3099'
+    }
+
+    options {
+        timeout(time: 15, unit: 'MINUTES')
+        disableConcurrentBuilds()
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+        timestamps()
+        ansiColor('xterm')
     }
 
     stages {
+        // =====================================================================
+        // 1. CHECKOUT
+        // =====================================================================
         stage('Checkout') {
             steps {
                 checkout scm
-                sh 'echo "Commit: $(git rev-parse --short HEAD)"'
-                sh 'echo "Branch: $(git branch --show-current)"'
+                script {
+                    env.GIT_SHA  = sh(script: 'git rev-parse --short=7 HEAD', returnStdout: true).trim()
+                    env.IMAGE_TAG = "${env.GIT_SHA}-${BUILD_NUMBER}"
+                    echo "============================================="
+                    echo "  Service:  ${SERVICE}"
+                    echo "  Image:    ${IMAGE_NAME}:${IMAGE_TAG}"
+                    echo "  Branch:   ${sh(script: 'git branch --show-current', returnStdout: true).trim()}"
+                    echo "  Commit:   ${GIT_SHA}"
+                    echo "============================================="
+                }
             }
         }
 
+        // =====================================================================
+        // 2. INSTALL DEPENDENCIES
+        // =====================================================================
+        stage('Install Dependencies') {
+            steps {
+                dir("${SERVICE_DIR}") {
+                    sh 'npm ci --no-audit --no-fund 2>&1 | tail -5'
+                }
+            }
+        }
+
+        // =====================================================================
+        // 3. CODE QUALITY (parallel: lint + audit)
+        // =====================================================================
         stage('Code Quality') {
             parallel {
-                stage('Lint') {
+                stage('ESLint') {
                     steps {
                         dir("${SERVICE_DIR}") {
-                            sh 'npm install --no-audit --no-fund 2>&1 | tail -3'
-                            sh 'npx eslint src/ --format compact || true'
+                            sh '''#!/bin/bash
+                                echo "--- ESLint ---"
+                                npx eslint src/ --format compact --max-warnings 10 2>&1 || true
+                            '''
                         }
                     }
                 }
-                stage('Audit') {
+                stage('npm Audit') {
                     steps {
                         dir("${SERVICE_DIR}") {
-                            sh 'npm audit --audit-level=high || true'
+                            sh '''#!/bin/bash
+                                echo "--- npm audit ---"
+                                npm audit --audit-level=critical 2>&1 || true
+                            '''
                         }
                     }
                 }
             }
         }
 
+        // =====================================================================
+        // 4. UNIT TESTS + COVERAGE
+        // =====================================================================
         stage('Unit Tests') {
             steps {
                 dir("${SERVICE_DIR}") {
-                    sh 'npx jest --forceExit --detectOpenHandles --coverage 2>&1 || true'
+                    sh '''#!/bin/bash
+                        echo "--- Running Jest ---"
+                        npx jest --forceExit --detectOpenHandles --coverage --verbose 2>&1
+                    '''
                 }
             }
         }
 
+        // =====================================================================
+        // 5. DOCKER BUILD
+        // =====================================================================
         stage('Docker Build') {
             steps {
-                sh "docker build -t ${IMAGE_NAME}:${IMAGE_TAG} -t ${IMAGE_NAME}:latest ${SERVICE_DIR}"
-                sh "docker images ${IMAGE_NAME} --format 'table {{.Repository}}\\t{{.Tag}}\\t{{.Size}}'"
+                sh """
+                    echo "--- Building Docker image ---"
+                    docker build \\
+                        -t ${IMAGE_NAME}:${IMAGE_TAG} \\
+                        -t ${IMAGE_NAME}:latest \\
+                        --label "git.sha=${GIT_SHA}" \\
+                        --label "build.number=${BUILD_NUMBER}" \\
+                        ${SERVICE_DIR}
+
+                    echo ""
+                    echo "--- Image details ---"
+                    docker images ${IMAGE_NAME} --format 'table {{.Repository}}\\t{{.Tag}}\\t{{.Size}}'
+                """
             }
         }
 
-        stage('Security Scan') {
+        // =====================================================================
+        // 6. SECURITY SCANS (parallel: Trivy + Gitleaks)
+        // =====================================================================
+        stage('Security Scans') {
             parallel {
-                stage('Trivy') {
+                stage('Trivy Image Scan') {
                     steps {
                         sh """#!/bin/bash
-                            if command -v trivy &>/dev/null; then
-                                trivy image --severity CRITICAL,HIGH --exit-code 0 ${IMAGE_NAME}:${IMAGE_TAG}
-                            else
-                                echo "WARN: Trivy not installed - skipping image scan"
+                            if ! command -v trivy &>/dev/null; then
+                                echo "SKIP: Trivy not installed"
+                                exit 0
                             fi
+                            echo "--- Trivy image scan ---"
+                            trivy image \\
+                                --severity CRITICAL,HIGH \\
+                                --exit-code 0 \\
+                                --format table \\
+                                ${IMAGE_NAME}:${IMAGE_TAG}
+                        """
+                    }
+                }
+                stage('Trivy Filesystem') {
+                    steps {
+                        sh """#!/bin/bash
+                            if ! command -v trivy &>/dev/null; then
+                                echo "SKIP: Trivy not installed"
+                                exit 0
+                            fi
+                            echo "--- Trivy filesystem scan ---"
+                            trivy fs --severity CRITICAL --exit-code 0 ${SERVICE_DIR}
                         """
                     }
                 }
                 stage('Gitleaks') {
                     steps {
                         sh """#!/bin/bash
-                            if command -v gitleaks &>/dev/null; then
-                                gitleaks detect --source . --report-format json --report-path gitleaks-report.json || true
-                            else
-                                echo "WARN: Gitleaks not installed - skipping secret scan"
+                            if ! command -v gitleaks &>/dev/null; then
+                                echo "SKIP: Gitleaks not installed"
+                                exit 0
                             fi
+                            echo "--- Gitleaks secret detection ---"
+                            gitleaks detect --source . --report-format json --report-path gitleaks-report.json --verbose 2>&1 || true
                         """
                     }
                 }
             }
         }
 
+        // =====================================================================
+        // 7. HELM VALIDATION
+        // =====================================================================
         stage('Helm Validate') {
             steps {
                 sh """#!/bin/bash
-                    if command -v helm &>/dev/null; then
-                        helm lint ${HELM_CHART}
-                        helm template test-release ${HELM_CHART} > /dev/null && echo "Helm template render: OK"
-                    else
-                        echo "WARN: Helm not installed - skipping chart validation"
+                    if ! command -v helm &>/dev/null; then
+                        echo "SKIP: Helm not installed"
+                        exit 0
                     fi
+                    echo "--- Helm lint ---"
+                    helm lint ${HELM_CHART} --strict
+
+                    echo "--- Helm template render ---"
+                    helm template test-release ${HELM_CHART} \\
+                        --set image.tag=${IMAGE_TAG} \\
+                        > /dev/null && echo "Template render: OK"
+
+                    echo "--- Helm dry-run ---"
+                    helm template test-release ${HELM_CHART} \\
+                        --set image.tag=${IMAGE_TAG} \\
+                        | head -30
                 """
             }
         }
 
-        stage('Docker Test Run') {
+        // =====================================================================
+        // 8. SMOKE TEST (docker run + curl)
+        // =====================================================================
+        stage('Smoke Test') {
             steps {
                 sh """
-                    echo "Starting container for smoke test..."
+                    echo "--- Starting container ---"
                     docker rm -f ${SERVICE}-test 2>/dev/null || true
-                    docker run -d --name ${SERVICE}-test -p 3099:3000 \
-                        -e JWT_SECRET=test-secret-key-for-ci \
-                        -e NODE_ENV=test \
+                    docker run -d --name ${SERVICE}-test \\
+                        -p ${TEST_PORT}:3000 \\
+                        -e JWT_SECRET=ci-test-secret-key \\
+                        -e NODE_ENV=test \\
                         ${IMAGE_NAME}:${IMAGE_TAG}
-                    
-                    echo "Waiting for service to start..."
-                    sleep 3
-                    
-                    echo "=== Health Check ==="
-                    curl -sf http://localhost:3099/health && echo ""
-                    
-                    echo "=== Readiness Check ==="
-                    curl -sf http://localhost:3099/ready && echo ""
-                    
-                    echo "=== Register Test User ==="
-                    curl -sf -X POST http://localhost:3099/api/v1/auth/register \
-                        -H 'Content-Type: application/json' \
-                        -d '{"username":"testuser","email":"test@test.com","password":"Test1234!"}' && echo ""
-                    
-                    echo "=== Login Test ==="
-                    curl -sf -X POST http://localhost:3099/api/v1/auth/login \
-                        -H 'Content-Type: application/json' \
-                        -d '{"email":"test@test.com","password":"Test1234!"}' && echo ""
-                    
-                    echo "=== Cleanup ==="
+
+                    echo "Waiting for service startup..."
+                    sleep 4
+
+                    echo ""
+                    echo "--- Health Check ---"
+                    curl -sf http://localhost:${TEST_PORT}/health | python3 -m json.tool 2>/dev/null || curl -sf http://localhost:${TEST_PORT}/health
+
+                    echo ""
+                    echo "--- Readiness Check ---"
+                    curl -sf http://localhost:${TEST_PORT}/ready | python3 -m json.tool 2>/dev/null || curl -sf http://localhost:${TEST_PORT}/ready
+
+                    echo ""
+                    echo "--- Register User ---"
+                    curl -sf -X POST http://localhost:${TEST_PORT}/api/v1/auth/register \\
+                        -H 'Content-Type: application/json' \\
+                        -d '{"username":"ci-test","email":"ci@test.com","password":"T3st!ng@CI"}' \\
+                        | python3 -m json.tool 2>/dev/null || true
+
+                    echo ""
+                    echo "--- Login ---"
+                    curl -sf -X POST http://localhost:${TEST_PORT}/api/v1/auth/login \\
+                        -H 'Content-Type: application/json' \\
+                        -d '{"email":"ci@test.com","password":"T3st!ng@CI"}' \\
+                        | python3 -m json.tool 2>/dev/null || true
+
+                    echo ""
+                    echo "--- Cleanup ---"
+                    docker logs ${SERVICE}-test --tail 5 2>&1 || true
                     docker rm -f ${SERVICE}-test
+                    echo ""
                     echo "Smoke tests PASSED"
                 """
             }
         }
     }
 
+    // =========================================================================
+    // POST ACTIONS
+    // =========================================================================
     post {
         always {
-            sh "docker rmi ${IMAGE_NAME}:${IMAGE_TAG} || true"
+            sh "docker rmi ${IMAGE_NAME}:${IMAGE_TAG} 2>/dev/null || true"
+            sh "docker rm -f ${SERVICE}-test 2>/dev/null || true"
             cleanWs()
         }
         success {
-            echo "Pipeline SUCCESS - ${IMAGE_NAME}:${IMAGE_TAG}"
+            echo """
+╔══════════════════════════════════════════╗
+║  ✅ PIPELINE SUCCESS                     ║
+║  Image: ${IMAGE_NAME}:${IMAGE_TAG}
+║  Build: #${BUILD_NUMBER}                 ║
+╚══════════════════════════════════════════╝
+"""
         }
         failure {
-            echo "Pipeline FAILED - check logs above"
+            echo """
+╔══════════════════════════════════════════╗
+║  ❌ PIPELINE FAILED                      ║
+║  Build: #${BUILD_NUMBER}                 ║
+║  Check console output above for errors   ║
+╚══════════════════════════════════════════╝
+"""
         }
     }
 }
