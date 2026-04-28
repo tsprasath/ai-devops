@@ -39,15 +39,14 @@ pipeline {
             steps {
                 checkout scm
                 script {
-                    // Use shell to compute and export vars
                     def sha = sh(script: 'git rev-parse --short=7 HEAD', returnStdout: true).trim()
-                    // In detached HEAD (Jenkins default), get branch from GIT_BRANCH env
                     def branch = (env.GIT_BRANCH ?: 'main').replaceAll('^origin/', '').replaceAll('[^a-zA-Z0-9._-]', '_')
+                    println "DEBUG: sha=[${sha}] branch=[${branch}] BUILD_NUMBER=[${env.BUILD_NUMBER}]"
                     env.GIT_SHA = sha
                     env.GIT_BRANCH_CLEAN = branch
-                    env.IMAGE_TAG = "${branch}_${sha}_$BUILD_NUMBER"
+                    env.IMAGE_TAG = "${branch}_${sha}_${env.BUILD_NUMBER}"
                     println "============================================="
-                    println "  Service:  $SERVICE"
+                    println "  Service:  ${env.SERVICE}"
                     println "  Image:    ${env.IMAGE_NAME}:${env.IMAGE_TAG}"
                     println "  Branch:   ${env.GIT_BRANCH_CLEAN}"
                     println "  Commit:   ${env.GIT_SHA}"
