@@ -1,23 +1,28 @@
 #!/usr/bin/env bash
 # =============================================================================
-# Jenkins 2.555.x LTS — Full Setup on Ubuntu 24.04
+# Jenkins 2.555.x LTS — Full DevOps Workstation Setup on Ubuntu 24.04
 # =============================================================================
 # Usage:
 #   chmod +x setup-jenkins-ubuntu24.sh
 #   sudo ./setup-jenkins-ubuntu24.sh
 #
 # What this does:
-#   1. Installs Java 21 (Temurin)
-#   2. Installs Jenkins 2.555.x LTS from official repo
-#   3. Installs Docker + adds jenkins user to docker group
-#   4. Installs Node.js 20 LTS (for JS builds)
-#   5. Installs Trivy (container security scanner)
-#   6. Installs Helm 3 (K8s package manager)
-#   7. Installs kubectl
-#   8. Installs Git, jq, curl, unzip
-#   9. Configures Jenkins (port, JVM opts, admin user)
-#  10. Installs essential plugins (no manual UI clicking)
-#  11. Prints access URL + initial admin password
+#   1.  System packages (git, jq, curl, unzip, zip, tree, colordiff, etc.)
+#   2.  Timezone → Asia/Kolkata (IST)
+#   3.  Java 21 (Eclipse Temurin)
+#   4.  Jenkins 2.555.x LTS + plugins + admin user
+#   5.  Docker Engine + adds jenkins user to docker group
+#   6.  Python 3.x + pip
+#   7.  NVM + Node.js 20 LTS
+#   8.  OCI CLI (Oracle Cloud)
+#   9.  Ansible 9.12.0 (ansible-core 2.16.x)
+#  10.  Helm 3.16.3
+#  11.  kubectl 1.30.8
+#  12.  k9s 0.32.7
+#  13.  OPA (Open Policy Agent) 0.70.0
+#  14.  Trivy (container security scanner)
+#  15.  Gitleaks (secret detection)
+#  16.  Firewall + summary
 # =============================================================================
 
 set -euo pipefail
@@ -29,6 +34,13 @@ JENKINS_ADMIN_PASS="${JENKINS_ADMIN_PASS:-admin123}"
 JAVA_VERSION="21"
 NODE_VERSION="20"
 JENKINS_HOME="/var/lib/jenkins"
+
+# Pinned tool versions
+HELM_VERSION="3.16.3"
+KUBECTL_VERSION="1.30.8"
+K9S_VERSION="0.32.7"
+OPA_VERSION="0.70.0"
+ANSIBLE_VERSION="9.12.0"      # ansible package (includes ansible-core 2.16.x)
 # ─────────────────────────────────────────────────────────────────────────────
 
 RED='\033[0;31m'
@@ -62,13 +74,26 @@ apt-get install -y -qq \
     git \
     jq \
     unzip \
+    zip \
     wget \
     fontconfig \
+    tree \
+    colordiff \
+    python3 \
+    python3-pip \
+    python3-venv \
     > /dev/null 2>&1
 log "Base packages installed"
 
 # ═════════════════════════════════════════════════════════════════════════════
-# 2. JAVA 21 (Eclipse Temurin — recommended for Jenkins)
+# 2. TIMEZONE → IST
+# ═════════════════════════════════════════════════════════════════════════════
+step "Timezone → Asia/Kolkata (IST)"
+timedatectl set-timezone Asia/Kolkata 2>/dev/null || ln -sf /usr/share/zoneinfo/Asia/Kolkata /etc/localtime
+log "Timezone set to $(date +%Z) ($(date +%z))"
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 3. JAVA 21 (Eclipse Temurin — recommended for Jenkins)
 # ═════════════════════════════════════════════════════════════════════════════
 step "Java ${JAVA_VERSION} (Eclipse Temurin)"
 if java -version 2>&1 | grep -q "version \"${JAVA_VERSION}"; then
@@ -84,7 +109,7 @@ else
 fi
 
 # ═════════════════════════════════════════════════════════════════════════════
-# 3. JENKINS 2.555.x LTS
+# 4. JENKINS 2.555.x LTS
 # ═════════════════════════════════════════════════════════════════════════════
 step "Jenkins 2.555.x LTS"
 if systemctl is-active --quiet jenkins 2>/dev/null; then
@@ -122,7 +147,7 @@ EOF
 fi
 
 # ═════════════════════════════════════════════════════════════════════════════
-# 4. CONFIGURE JENKINS
+# 5. CONFIGURE JENKINS
 # ═════════════════════════════════════════════════════════════════════════════
 step "Configure Jenkins"
 
@@ -143,7 +168,7 @@ systemctl daemon-reload
 log "JVM: -Xmx2g -Xms512m, Port: ${JENKINS_PORT}, Setup wizard: disabled"
 
 # ═════════════════════════════════════════════════════════════════════════════
-# 5. ADMIN USER + SECURITY (via init.groovy.d)
+# 6. ADMIN USER + SECURITY (via init.groovy.d)
 # ═════════════════════════════════════════════════════════════════════════════
 step "Admin user setup"
 mkdir -p "${JENKINS_HOME}/init.groovy.d"
@@ -189,7 +214,7 @@ chown -R jenkins:jenkins "${JENKINS_HOME}/init.groovy.d"
 log "Admin: ${JENKINS_ADMIN_USER} / ${JENKINS_ADMIN_PASS}"
 
 # ═════════════════════════════════════════════════════════════════════════════
-# 6. DOCKER
+# 7. DOCKER
 # ═════════════════════════════════════════════════════════════════════════════
 step "Docker Engine"
 if command -v docker &>/dev/null; then
@@ -211,19 +236,71 @@ usermod -aG docker jenkins 2>/dev/null || true
 log "Jenkins user added to docker group"
 
 # ═════════════════════════════════════════════════════════════════════════════
-# 7. NODE.JS 20 LTS
+# 8. JENKINS BASHRC + DOCKER GROUP
 # ═════════════════════════════════════════════════════════════════════════════
-step "Node.js ${NODE_VERSION} LTS"
-if node --version 2>/dev/null | grep -q "v${NODE_VERSION}"; then
-    log "Node.js already installed: $(node --version)"
+step "Jenkins user config"
+cp /etc/skel/.bashrc "${JENKINS_HOME}/.bashrc" 2>/dev/null || true
+chown jenkins:jenkins "${JENKINS_HOME}/.bashrc" 2>/dev/null || true
+log "Jenkins bashrc + docker group configured"
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 9. NVM + NODE.JS 20 LTS
+# ═════════════════════════════════════════════════════════════════════════════
+step "NVM + Node.js ${NODE_VERSION} LTS"
+export NVM_DIR="/opt/nvm"
+mkdir -p "${NVM_DIR}"
+if [[ ! -f "${NVM_DIR}/nvm.sh" ]]; then
+    curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | NVM_DIR="${NVM_DIR}" bash > /dev/null 2>&1
+    log "NVM installed to ${NVM_DIR}"
 else
-    curl -fsSL "https://deb.nodesource.com/setup_${NODE_VERSION}.x" | bash - > /dev/null 2>&1
-    apt-get install -y -qq nodejs > /dev/null 2>&1
-    log "Node.js installed: $(node --version), npm: $(npm --version)"
+    log "NVM already installed"
+fi
+# Source NVM and install Node
+source "${NVM_DIR}/nvm.sh"
+nvm install "${NODE_VERSION}" > /dev/null 2>&1
+nvm alias default "${NODE_VERSION}" > /dev/null 2>&1
+# Symlink node/npm to /usr/local/bin so all users (including jenkins) can use them
+NODE_PATH="$(nvm which ${NODE_VERSION})"
+NODE_DIR="$(dirname "${NODE_PATH}")"
+ln -sf "${NODE_DIR}/node" /usr/local/bin/node
+ln -sf "${NODE_DIR}/npm" /usr/local/bin/npm
+ln -sf "${NODE_DIR}/npx" /usr/local/bin/npx
+# Add NVM sourcing to jenkins bashrc
+if ! grep -q 'NVM_DIR' "${JENKINS_HOME}/.bashrc" 2>/dev/null; then
+    cat >> "${JENKINS_HOME}/.bashrc" <<NVMRC
+export NVM_DIR="${NVM_DIR}"
+[ -s "\${NVM_DIR}/nvm.sh" ] && . "\${NVM_DIR}/nvm.sh"
+NVMRC
+fi
+log "Node.js installed: $(node --version), npm: $(npm --version)"
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 10. OCI CLI (Oracle Cloud Infrastructure)
+# ═════════════════════════════════════════════════════════════════════════════
+step "OCI CLI"
+if command -v oci &>/dev/null; then
+    log "OCI CLI already installed: $(oci --version 2>&1)"
+else
+    # Install OCI CLI non-interactively for all users
+    curl -fsSL https://raw.githubusercontent.com/oracle/oci-cli/master/scripts/install/install.sh | \
+        bash -s -- --accept-all-defaults --install-dir /opt/oci-cli/lib --exec-dir /usr/local/bin > /dev/null 2>&1
+    log "OCI CLI installed: $(oci --version 2>&1)"
 fi
 
 # ═════════════════════════════════════════════════════════════════════════════
-# 8. TRIVY (Container Security Scanner)
+# 11. ANSIBLE ${ANSIBLE_VERSION}
+# ═════════════════════════════════════════════════════════════════════════════
+step "Ansible ${ANSIBLE_VERSION}"
+CURRENT_ANSIBLE=$(pip3 show ansible 2>/dev/null | grep -i '^version:' | awk '{print $2}' || echo "none")
+if [[ "$CURRENT_ANSIBLE" == "${ANSIBLE_VERSION}" ]]; then
+    log "Ansible ${ANSIBLE_VERSION} already installed"
+else
+    pip3 install --break-system-packages "ansible==${ANSIBLE_VERSION}" > /dev/null 2>&1
+    log "Ansible installed: $(ansible --version | head -1)"
+fi
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 12. TRIVY (Container Security Scanner)
 # ═════════════════════════════════════════════════════════════════════════════
 step "Trivy"
 if command -v trivy &>/dev/null; then
@@ -239,31 +316,36 @@ else
 fi
 
 # ═════════════════════════════════════════════════════════════════════════════
-# 9. HELM 3
+# 13. HELM ${HELM_VERSION}
 # ═════════════════════════════════════════════════════════════════════════════
-step "Helm 3"
-if command -v helm &>/dev/null; then
-    log "Helm already installed: $(helm version --short)"
+step "Helm ${HELM_VERSION}"
+if helm version --short 2>/dev/null | grep -q "${HELM_VERSION}"; then
+    log "Helm ${HELM_VERSION} already installed"
 else
-    curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash > /dev/null 2>&1
+    curl -fsSLo /tmp/helm.tar.gz \
+        "https://get.helm.sh/helm-v${HELM_VERSION}-linux-amd64.tar.gz"
+    tar xzf /tmp/helm.tar.gz -C /tmp
+    mv /tmp/linux-amd64/helm /usr/local/bin/helm
+    chmod +x /usr/local/bin/helm
+    rm -rf /tmp/linux-amd64 /tmp/helm.tar.gz
     log "Helm installed: $(helm version --short)"
 fi
 
 # ═════════════════════════════════════════════════════════════════════════════
-# 10. KUBECTL
+# 14. KUBECTL ${KUBECTL_VERSION}
 # ═════════════════════════════════════════════════════════════════════════════
-step "kubectl"
-if command -v kubectl &>/dev/null; then
-    log "kubectl already installed: $(kubectl version --client --short 2>/dev/null || kubectl version --client)"
+step "kubectl ${KUBECTL_VERSION}"
+if kubectl version --client -o json 2>/dev/null | grep -q "${KUBECTL_VERSION}"; then
+    log "kubectl ${KUBECTL_VERSION} already installed"
 else
-    KUBECTL_VER=$(curl -fsSL https://dl.k8s.io/release/stable.txt)
-    curl -fsSLo /usr/local/bin/kubectl "https://dl.k8s.io/release/${KUBECTL_VER}/bin/linux/amd64/kubectl"
+    curl -fsSLo /usr/local/bin/kubectl \
+        "https://dl.k8s.io/release/v${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
     chmod +x /usr/local/bin/kubectl
-    log "kubectl installed: ${KUBECTL_VER}"
+    log "kubectl installed: v${KUBECTL_VERSION}"
 fi
 
 # ═════════════════════════════════════════════════════════════════════════════
-# 11. GITLEAKS (Secret Detection)
+# 15. GITLEAKS (Secret Detection)
 # ═════════════════════════════════════════════════════════════════════════════
 step "Gitleaks"
 if command -v gitleaks &>/dev/null; then
@@ -279,7 +361,35 @@ else
 fi
 
 # ═════════════════════════════════════════════════════════════════════════════
-# 12. START JENKINS + WAIT FOR READY
+# 16. K9S ${K9S_VERSION}
+# ═════════════════════════════════════════════════════════════════════════════
+step "k9s ${K9S_VERSION}"
+if k9s version --short 2>/dev/null | grep -q "${K9S_VERSION}"; then
+    log "k9s ${K9S_VERSION} already installed"
+else
+    curl -fsSLo /tmp/k9s.tar.gz \
+        "https://github.com/derailed/k9s/releases/download/v${K9S_VERSION}/k9s_Linux_amd64.tar.gz"
+    tar xzf /tmp/k9s.tar.gz -C /usr/local/bin k9s
+    chmod +x /usr/local/bin/k9s
+    rm -f /tmp/k9s.tar.gz
+    log "k9s installed: v${K9S_VERSION}"
+fi
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 17. OPA (Open Policy Agent) ${OPA_VERSION}
+# ═════════════════════════════════════════════════════════════════════════════
+step "OPA ${OPA_VERSION}"
+if opa version 2>/dev/null | grep -q "${OPA_VERSION}"; then
+    log "OPA ${OPA_VERSION} already installed"
+else
+    curl -fsSLo /usr/local/bin/opa \
+        "https://openpolicyagent.org/downloads/v${OPA_VERSION}/opa_linux_amd64_static"
+    chmod +x /usr/local/bin/opa
+    log "OPA installed: $(opa version | head -1)"
+fi
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 18. START JENKINS + WAIT FOR READY
 # ═════════════════════════════════════════════════════════════════════════════
 step "Starting Jenkins"
 systemctl enable jenkins
@@ -302,7 +412,7 @@ if ! curl -sf -o /dev/null "http://localhost:${JENKINS_PORT}/login" 2>/dev/null;
 fi
 
 # ═════════════════════════════════════════════════════════════════════════════
-# 13. INSTALL PLUGINS (via jenkins-cli)
+# 19. INSTALL PLUGINS (via jenkins-cli)
 # ═════════════════════════════════════════════════════════════════════════════
 step "Installing plugins"
 
@@ -394,14 +504,14 @@ for i in $(seq 1 40); do
 done
 
 # ═════════════════════════════════════════════════════════════════════════════
-# 14. CLEANUP INIT SCRIPTS (run once)
+# 20. CLEANUP INIT SCRIPTS (run once)
 # ═════════════════════════════════════════════════════════════════════════════
 # Remove init scripts so they don't re-run on every restart
 rm -f "${JENKINS_HOME}/init.groovy.d/01-admin-user.groovy"
 log "Init scripts cleaned up"
 
 # ═════════════════════════════════════════════════════════════════════════════
-# 15. FIREWALL (optional — open port)
+# 21. FIREWALL (optional — open port)
 # ═════════════════════════════════════════════════════════════════════════════
 if command -v ufw &>/dev/null && ufw status | grep -q "active"; then
     ufw allow "${JENKINS_PORT}/tcp" > /dev/null 2>&1
@@ -425,11 +535,17 @@ echo "  Installed tools:"
 echo "    Java:     $(java -version 2>&1 | head -1)"
 echo "    Jenkins:  $(jenkins --version 2>/dev/null || echo 'check systemctl status jenkins')"
 echo "    Docker:   $(docker --version 2>/dev/null)"
+echo "    Python:   $(python3 --version 2>/dev/null)"
+echo "    NVM:      $(source /opt/nvm/nvm.sh 2>/dev/null && nvm --version || echo 'installed')"
 echo "    Node.js:  $(node --version 2>/dev/null)"
 echo "    npm:      $(npm --version 2>/dev/null)"
-echo "    Trivy:    $(trivy --version 2>/dev/null | head -1)"
+echo "    OCI CLI:  $(oci --version 2>/dev/null || echo 'installed')"
+echo "    Ansible:  $(ansible --version 2>/dev/null | head -1)"
 echo "    Helm:     $(helm version --short 2>/dev/null)"
-echo "    kubectl:  $(kubectl version --client --short 2>/dev/null || echo 'installed')"
+echo "    kubectl:  $(kubectl version --client -o json 2>/dev/null | jq -r .clientVersion.gitVersion || echo 'installed')"
+echo "    k9s:      $(k9s version --short 2>/dev/null | grep Version || echo 'installed')"
+echo "    OPA:      $(opa version 2>/dev/null | head -1)"
+echo "    Trivy:    $(trivy --version 2>/dev/null | head -1)"
 echo "    Gitleaks: $(gitleaks version 2>/dev/null)"
 echo ""
 echo "  Config:"
