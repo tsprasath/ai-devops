@@ -33,7 +33,12 @@ After the script completes, open `http://localhost:<PORT>` and log in.
 
 ### Post-Install: Apply JCasC Configuration
 
-JCasC auto-creates jobs, credentials, and shared library config on startup. To apply:
+The setup script (`ci/setup-jenkins-ubuntu24.sh`) automatically:
+- Copies `jenkins.yml` to `/var/lib/jenkins/casc_configs/`
+- Sets `CASC_JENKINS_CONFIG` in the systemd override
+- Creates `/var/lib/jenkins/secrets/.env` placeholder (EnvironmentFile)
+
+To complete the setup, fill in secret values:
 
 ```bash
 # Copy JCasC config

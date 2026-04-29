@@ -225,7 +225,24 @@ cat > /etc/systemd/system/jenkins.service.d/override.conf <<EOF
 [Service]
 Environment="JAVA_OPTS=-Djava.awt.headless=true -Xmx2g -Xms512m -Djenkins.install.runSetupWizard=false"
 Environment="JENKINS_PORT=${JENKINS_PORT}"
+Environment="CASC_JENKINS_CONFIG=/var/lib/jenkins/casc_configs/jenkins.yml"
+EnvironmentFile=-/var/lib/jenkins/secrets/.env
 EOF
+
+# Copy JCasC config and prepare secrets directory
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+mkdir -p "${JENKINS_HOME}/casc_configs"
+if [[ -f "${SCRIPT_DIR}/config/jenkins.yml" ]]; then
+    cp "${SCRIPT_DIR}/config/jenkins.yml" "${JENKINS_HOME}/casc_configs/jenkins.yml"
+    log "JCasC config copied to ${JENKINS_HOME}/casc_configs/jenkins.yml"
+fi
+mkdir -p "${JENKINS_HOME}/secrets"
+if [[ ! -f "${JENKINS_HOME}/secrets/.env" ]]; then
+    # Create empty .env so EnvironmentFile doesn't warn (- prefix makes it optional)
+    touch "${JENKINS_HOME}/secrets/.env"
+    chmod 600 "${JENKINS_HOME}/secrets/.env"
+    log "Secrets .env placeholder created — fill with values from ci/config/env.example"
+fi
 
 # Set port in defaults file too
 if [[ -f /etc/default/jenkins ]]; then
