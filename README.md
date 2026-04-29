@@ -1,220 +1,144 @@
-# sample-test-app
+# ai-devops
 
-A DevOps platform demo and reference implementation showcasing production-grade CI/CD, GitOps, and infrastructure-as-code patterns on Oracle Cloud (OKE).
+DevOps platform repository for the Diksha project. Contains CI pipelines, Helm charts, ArgoCD applications, Kubernetes bootstrap manifests, Terraform modules, and monitoring configs.
 
-**Repo:** `git@github.com:tsprasath/sample-test-app.git`
-**DevOps/Infra repo:** `git@github.com:tsprasath/ai-devops.git`
+**This is NOT application source code.** Application repos (e.g., [sample-test-app](https://github.com/tsprasath/sample-test-app)) contain source + Dockerfile. This repo owns the deployment infrastructure and GitOps state.
 
----
-
-## What This Demonstrates
-
-- **Split-repo GitOps** — app code and devops/infra config live in separate repos
-- **JCasC** — Jenkins Configuration as Code with env var interpolation
-- **K8s bootstrap with Kustomize** — namespaces, OCIR secrets, Reloader, resource quotas, network policies per environment
-- **Helm charts** with per-environment values files (dev / staging / prod)
-- **ArgoCD ApplicationSet** for automatic service discovery and deployment
-- **Jenkins shared library** for reusable CI/CD pipeline steps
-- **Terraform modules** for OCI infrastructure (OKE, VCN, OCIR, Vault, WAF, API Gateway)
-- **Security scanning** — Trivy (container), Gitleaks (secrets), OPA (policy)
-- **Monitoring** — Prometheus, Grafana (DORA metrics, security overview), Loki
-
----
-
-## Architecture Flow
+## Architecture — Split-Repo GitOps Flow
 
 ```
- Developer pushes code
-        |
-        v
- +-------------+     webhook     +----------------+
- |  App Repo   | --------------> |    Jenkins      |
- | (this repo) |                 | (JCasC + shared |
- +-------------+                 |    library)     |
-                                 +-------+--------+
-                                         |
-                          build, test, scan (Trivy/Gitleaks/OPA)
-                                         |
-                                         v
-                                 +----------------+
-                                 |  OCIR (Oracle  |
-                                 |  Container     |
-                                 |  Registry)     |
-                                 +-------+--------+
-                                         |
-                              gitops-update (image tag)
-                                         |
-                                         v
-                                 +----------------+
-                                 |  DevOps Repo   |  <-- Helm values updated
-                                 |  (ai-devops)   |
-                                 +-------+--------+
-                                         |
-                                    auto-sync
-                                         |
-                                         v
-                                 +----------------+
-                                 |    ArgoCD      |
-                                 | (ApplicationSet|
-                                 |  per env)      |
-                                 +-------+--------+
-                                         |
-                                         v
-                                 +----------------+
-                                 |  OKE Cluster   |
-                                 |  dev / staging |
-                                 |  / prod        |
-                                 +----------------+
-```
+  ┌──────────────┐       ┌──────────────────┐       ┌──────────────────┐       ┌─────────────┐
+  │  App Repo    │ push  │  Jenkins          │  push │  DevOps Repo     │ sync  │  OKE        │
+  │ (source +   ├──────►│  Build & Push     ├──────►│  (ai-devops)     ├──────►│  Cluster    │
+  │  Dockerfile) │       │  to OCIR          │       │  values-{env}    │       │  via ArgoCD │
+  └──────────────┘       └──────────────────┘       └──────────────────┘       └─────────────┘
+                                │                            ▲
+                                │  Trivy scan, tests         │  ArgoCD watches
+                                │  shared-lib steps          │  for tag changes
+                                ▼                            │
+                         ┌──────────────┐             ┌──────┴───────┐
+                         │ OCIR         │             │ ArgoCD       │
+                         │ bom.ocir.io  │             │ ApplicationSet│
+                         └──────────────┘             └──────────────┘
 
----
+  Bootstrap (one-time per env):
+  ┌─────────────────────┐
+  │ infra/bootstrap/    │──► Namespaces, OCIR Secrets, ResourceQuotas, Stakater Reloader
+  │ Kustomize overlays  │    diksha-app-{env}, diksha-monitoring-{env}, diksha-infra-{env}
+  └─────────────────────┘
+```
 
 ## Directory Structure
 
 ```
-.
-├── services/
-│   └── auth-service/          # Node.js sample service
-│       ├── src/
-│       │   ├── index.js
-│       │   └── middleware/auth.js
-│       ├── tests/auth.test.js
-│       └── package.json
-├── ci/
-│   ├── Jenkinsfile            # Main pipeline
-│   ├── templates/
-│   │   └── Jenkinsfile.app-repo   # Template for onboarding new app repos
-│   ├── config/
-│   │   ├── jenkins.yml        # JCasC configuration
-│   │   └── env.example        # Required env vars
-│   ├── shared-lib/
-│   │   ├── vars/
-│   │   │   ├── gitopsUpdate.groovy
-│   │   │   └── promoteToProd.groovy
-│   │   └── src/org/dev/Constants.groovy
-│   ├── setup-jenkins.sh
-│   └── setup-jenkins-ubuntu24.sh
-├── infra/
-│   ├── terraform/
-│   │   ├── modules/           # OKE, VCN, OCIR, Vault, WAF, API Gateway
-│   │   └── environments/      # dev, staging, prod tfvars
-│   ├── helm-charts/
-│   │   └── auth-service/      # Chart + per-env values files
-│   ├── argocd-apps/
-│   │   ├── appset-services.yaml   # ApplicationSet auto-discovery
-│   │   └── {dev,staging,prod}/    # Per-env ArgoCD app manifests
-│   ├── bootstrap/
-│   │   ├── base/              # Namespaces, quotas, secrets, network policies
-│   │   ├── overlays/{dev,staging,prod}/
-│   │   └── bootstrap.sh
-│   └── monitoring/
-│       ├── prometheus/        # Prometheus + alerting rules
-│       ├── grafana/           # DORA metrics, security, service health dashboards
-│       └── loki/              # Log aggregation
-└── webhook-setup.sh
+ci/
+  config/jenkins.yml       JCasC config (env var interpolation, zero hardcoded secrets)
+  config/env.example       Environment variables template
+  shared-lib/              Groovy shared library (gitopsUpdate, buildAndPush, trivyScan, promoteToProd)
+  templates/               Jenkinsfile.app-repo template for onboarding app repos
+  pipelines/               Jenkins pipeline definitions
+
+infra/
+  helm-charts/             Per-service Helm charts with per-env values
+    <service>/
+      Chart.yaml
+      values-dev.yaml
+      values-staging.yaml
+      values-prod.yaml
+  argocd-apps/             ArgoCD Application manifests + ApplicationSet (auto-discovers from helm-charts/)
+  bootstrap/               Kustomize overlays per env — namespaces, OCIR secrets, quotas, Reloader
+    base/
+    overlays/dev/
+    overlays/staging/
+    overlays/prod/
+  terraform/               OCI infra modules (VCN, OKE, OCIR, API Gateway, WAF, Vault)
+  monitoring/              Prometheus, Grafana, Loki configs
+
+services/                  Service source (auth-service) — being migrated to split repos
+security/                  OPA policies, scan configs
+docs/                      Architecture documentation
 ```
 
----
+## Prerequisites
+
+- OCI CLI configured with appropriate tenancy access
+- kubectl connected to the OKE cluster
+- Helm 3.x
+- Kustomize
+- Terraform >= 1.0
+- Jenkins with the JCasC plugin
+- ArgoCD installed on the cluster
 
 ## Quick Start
 
-### Prerequisites
-
-- OCI account with OKE cluster provisioned
-- Jenkins instance (use `ci/setup-jenkins.sh` or `ci/setup-jenkins-ubuntu24.sh`)
-- ArgoCD installed on the cluster
-- `kubectl`, `helm`, `terraform`, `kustomize` installed locally
-
-### 1. Provision Infrastructure
+### 1. Bootstrap a New Environment
 
 ```bash
-cd infra/terraform/environments/dev
-cp terraform.tfvars.example terraform.tfvars   # fill in OCI values
-terraform init && terraform apply
+# Apply namespaces, secrets, quotas, Reloader
+kubectl apply -k infra/bootstrap/overlays/dev/
 ```
 
-### 2. Bootstrap the Cluster
+### 2. Deploy ArgoCD ApplicationSet
 
 ```bash
-cd infra/bootstrap
-bash bootstrap.sh dev    # creates namespaces, quotas, secrets, reloader
+kubectl apply -f infra/argocd-apps/applicationset.yaml
 ```
+
+ArgoCD auto-discovers every service under `infra/helm-charts/` and creates Application resources per environment.
 
 ### 3. Configure Jenkins
 
-```bash
-# Copy env vars and fill in
-cp ci/config/env.example ci/config/.env
+Copy `ci/config/env.example` to your Jenkins environment, fill in values (OCIR credentials, OKE kubeconfig, GitHub tokens). Jenkins loads `ci/config/jenkins.yml` via JCasC — all secrets are injected via environment variables, nothing hardcoded.
 
-# Run setup
-bash ci/setup-jenkins.sh
-```
+## How to Add a New Service (4 Steps)
 
-Jenkins loads `ci/config/jenkins.yml` via JCasC with env var interpolation.
+1. **Create Helm chart**: Add `infra/helm-charts/<service-name>/` with `Chart.yaml`, `templates/`, and `values-dev.yaml`, `values-staging.yaml`, `values-prod.yaml`
+2. **Add Jenkinsfile to app repo**: Copy `ci/templates/Jenkinsfile.app-repo` into the app repo root, set the service name parameter
+3. **Create Jenkins job**: Add a parameterized pipeline job pointing to the app repo (one pipeline per service)
+4. **Push**: ArgoCD ApplicationSet auto-detects the new chart directory and creates the deployment
 
-### 4. Deploy ArgoCD Apps
-
-```bash
-kubectl apply -f infra/argocd-apps/appset-services.yaml
-```
-
-ArgoCD auto-discovers services under `infra/helm-charts/` and deploys per environment.
-
-### 5. Set Up Webhooks
-
-```bash
-bash webhook-setup.sh
-```
-
----
-
-## Onboarding a New Service
-
-1. **Create the service** under `services/<service-name>/` with a Dockerfile
-2. **Add a Helm chart** at `infra/helm-charts/<service-name>/` with `values-dev.yaml`, `values-staging.yaml`, `values-prod.yaml`
-3. **Copy the Jenkinsfile template** from `ci/templates/Jenkinsfile.app-repo` into the service or repo
-4. **ArgoCD auto-discovers** — the ApplicationSet in `infra/argocd-apps/appset-services.yaml` picks up new charts automatically
-5. **(Optional)** Add per-env ArgoCD manifests under `infra/argocd-apps/{dev,staging,prod}/`
-
----
-
-## Environment Promotion Flow
+## Pipeline Flow
 
 ```
-dev  ──(auto-deploy on merge)──>  staging  ──(manual approval)──>  prod
+Developer pushes to app repo
+  └─► Jenkins webhook triggers build
+       ├─► buildAndPush  — Docker build, push to bom.ocir.io
+       ├─► trivyScan     — Image vulnerability scan
+       └─► gitopsUpdate  — Updates image tag in ai-devops values-{env}.yaml
+            └─► ArgoCD detects change, syncs to OKE cluster
 ```
 
-1. **Dev**: Push to main triggers Jenkins → build → scan → push image → `gitopsUpdate` updates dev values → ArgoCD syncs
-2. **Staging**: `gitopsUpdate` bumps staging values file → ArgoCD syncs to staging namespace
-3. **Prod**: `promoteToProd` shared-lib step requires manual approval → updates prod values → ArgoCD syncs to prod namespace
+## Environment Promotion
 
-Security gates (Trivy, Gitleaks, OPA) run at build time. Failed scans block promotion.
+| Environment | Trigger                    | Namespace Pattern       |
+|-------------|----------------------------|-------------------------|
+| dev         | Auto on push to develop    | diksha-app-dev          |
+| staging     | Auto on merge to main      | diksha-app-staging      |
+| prod        | Manual approval + promote  | diksha-app-prod         |
 
----
+Promotion to prod uses the `promoteToProd` shared-lib step which copies the staging image tag to `values-prod.yaml` and requires manual approval in Jenkins.
 
-## Security
+## Stack
 
-- **Trivy** — container image vulnerability scanning
-- **Gitleaks** — secret detection in source code
-- **OPA** — policy-as-code enforcement
-- **Network Policies** — per-namespace traffic isolation
-- **WAF** — Oracle WAF module via Terraform
-- **OCIR secrets** — managed via Kustomize bootstrap, not checked into git
+- **Runtime**: Node.js 20, Docker
+- **Orchestration**: OKE (Oracle Kubernetes Engine)
+- **CI**: Jenkins + JCasC + Shared Library
+- **CD**: ArgoCD + ApplicationSet
+- **Registry**: OCIR (bom.ocir.io)
+- **IaC**: Terraform (OCI provider)
+- **Monitoring**: Prometheus, Grafana, Loki
+- **Security**: Trivy, OPA, OCI WAF, OCI Vault
 
----
+## Namespaces
 
-## Monitoring
+- `diksha-app-{env}` — Application workloads
+- `diksha-monitoring-{env}` — Prometheus, Grafana, Loki
+- `diksha-networking-{env}` — Ingress, API Gateway configs
+- `diksha-infra-{env}` — Infrastructure services
+- `jenkins` — CI server
 
-Pre-configured dashboards and alerting:
+## Links
 
-- **DORA Metrics** — deployment frequency, lead time, MTTR, change failure rate
-- **Service Health** — request rates, latency, error rates
-- **Security Overview** — scan results, policy violations
-
-See `infra/monitoring/README.md` for setup details.
-
----
-
-## License
-
-MIT
+- **DevOps Repo**: [tsprasath/ai-devops](https://github.com/tsprasath/ai-devops)
+- **Sample App Repo**: [tsprasath/sample-test-app](https://github.com/tsprasath/sample-test-app)
+- **Architecture**: [docs/architecture.md](docs/architecture.md)
