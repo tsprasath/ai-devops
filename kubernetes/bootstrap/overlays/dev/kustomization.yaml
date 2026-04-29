@@ -8,8 +8,7 @@ kind: Kustomization
 resources:
   - ../../base
 
-nameSuffix: "-dev"
-namespace: diksha-app-dev
+namespace: dev
 
 commonLabels:
   diksha.dev/environment: dev
@@ -35,10 +34,3 @@ patches:
       - op: replace
         path: /spec/hard/pods
         value: "30"
-
-  - target:
-      kind: Namespace
-    patch: |
-      - op: add
-        path: /metadata/labels/diksha.dev~1environment
-        value: dev

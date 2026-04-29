@@ -33,28 +33,38 @@ After the script completes, open `http://localhost:<PORT>` and log in.
 
 ### Post-Install: Apply JCasC Configuration
 
-JCasC auto-creates jobs, credentials, and shared library config on startup. To apply manually:
+JCasC auto-creates jobs, credentials, and shared library config on startup. To apply:
 
 ```bash
-# Copy JCasC config and set env vars
+# Copy JCasC config
+sudo mkdir -p /var/lib/jenkins/casc_configs
 sudo cp ci/config/jenkins.yml /var/lib/jenkins/casc_configs/jenkins.yml
 
-# Create systemd override with env vars (see ci/config/env.example)
-sudo mkdir -p /etc/systemd/system/jenkins.service.d
+# Place kubeconfig for deployments
+sudo mkdir -p /var/lib/jenkins/secrets
+sudo cp <your-kubeconfig> /var/lib/jenkins/secrets/kubeconfig
+sudo chown -R jenkins:jenkins /var/lib/jenkins/secrets
+sudo chmod 600 /var/lib/jenkins/secrets/kubeconfig
+
+# Set only the secret env vars (see ci/config/env.example)
+# Option A: systemd EnvironmentFile
 sudo tee /etc/systemd/system/jenkins.service.d/override.conf <<EOF
 [Service]
 Environment="CASC_JENKINS_CONFIG=/var/lib/jenkins/casc_configs/jenkins.yml"
-Environment="JENKINS_ADMIN_PASSWORD=<your-password>"
-Environment="OCI_REGION=ap-mumbai-1"
-Environment="OCIR_URL=bom.ocir.io"
-# ... add all vars from env.example
+Environment="JENKINS_ADMIN_PASSWORD=your-password"
+Environment="OCIR_USERNAME=tenancy/user"
+Environment="OCIR_PASSWORD=auth-token"
+Environment="GIT_TOKEN=ghp_xxx"
+Environment="SLACK_WEBHOOK_URL=https://hooks.slack.com/..."
+Environment="TEAMS_WEBHOOK_URL=https://outlook.office.com/..."
+Environment="SONAR_TOKEN=sqp_xxx"
 EOF
 
 # Restart to apply
 sudo systemctl daemon-reload && sudo systemctl restart jenkins
 ```
 
-Verify at: http://localhost:8081/configuration-as-code/
+Non-secret values (OCI region, OCIR URL, repo URLs, channels, thresholds, KUBECONFIG path) are hardcoded in jenkins.yml — no env vars needed for those.
 
 ### Trigger a Build
 
@@ -93,10 +103,11 @@ All credentials are managed via JCasC (`ci/config/jenkins.yml`) and populated fr
 |-----------------------|-------------------|--------------------------------------|--------------------------------------|
 | `ocir-credentials`   | Username/Password | `OCIR_USERNAME`, `OCIR_PASSWORD`     | OCIR login (tenancy/user + auth token) |
 | `git-credentials`    | Username/Password | `GIT_USERNAME`, `GIT_TOKEN`          | GitHub PAT for repo access & gitops  |
-| `oke-kubeconfig`     | Secret text       | `OKE_KUBECONFIG_B64`                 | OKE cluster kubeconfig (base64)      |
 | `slack-webhook-url`  | Secret text       | `SLACK_WEBHOOK_URL`                  | Slack incoming webhook               |
 | `teams-webhook-url`  | Secret text       | `TEAMS_WEBHOOK_URL`                  | MS Teams incoming webhook            |
 | `sonar-token`        | Secret text       | `SONAR_TOKEN`                        | SonarQube analysis token (optional)  |
+
+**Note:** Kubeconfig is NOT a Jenkins credential — it's a file at `/var/lib/jenkins/secrets/kubeconfig` exposed via the `KUBECONFIG` global env var.
 
 ### 3. Shared Library Setup
 
@@ -149,7 +160,7 @@ Credentials:       kubeconfig or service account
 ```
 ci/
 ├── config/
-│   ├── jenkins.yml               # JCasC: jobs, credentials, shared lib, tools (env var interpolation)
+│   ├── jenkins.yml               # JCasC: jobs, credentials, shared lib, tools (secrets via ${VAR})
 │   └── env.example               # Documents all required environment variables
 ├── setup-jenkins-ubuntu24.sh     # Automated full Jenkins setup (Ubuntu 24.04)
 ├── Jenkinsfile                   # Production (K8s agent, shared lib, full pipeline)

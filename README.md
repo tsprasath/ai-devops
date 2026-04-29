@@ -24,7 +24,7 @@ DevOps platform repository for the Diksha project. Contains CI pipelines, Helm c
   Bootstrap (one-time per env):
   ┌─────────────────────┐
   │ kubernetes/bootstrap/    │──► Namespaces, OCIR Secrets, ResourceQuotas, Stakater Reloader
-  │ Kustomize overlays  │    diksha-app-{env}, diksha-monitoring-{env}, diksha-infra-{env}
+  │ Kustomize overlays  │    dev, monitoring (per environment)
   └─────────────────────┘
 ```
 
@@ -32,7 +32,7 @@ DevOps platform repository for the Diksha project. Contains CI pipelines, Helm c
 
 ```
 ci/
-  config/jenkins.yml       JCasC config (env var interpolation, zero hardcoded secrets)
+  config/jenkins.yml       JCasC config (hardcoded non-secrets + ${VAR} for secrets only)
   config/env.example       Environment variables template
   Jenkinsfile              Main CI/CD pipeline
   Jenkinsfile.full         Full pipeline variant (build + deploy all stages)
@@ -104,13 +104,14 @@ sudo systemctl restart jenkins
 ```
 
 JCasC (`ci/config/jenkins.yml`) manages everything declaratively:
-- **Credentials**: OCIR, GitHub PAT, OKE kubeconfig, Slack/Teams webhooks, SonarQube token
+- **Credentials**: OCIR, GitHub PAT, Slack/Teams webhooks, SonarQube token
 - **Shared Library**: `diksha-dev-lib` from orphan branch `shared-lib` (Git Source retriever)
 - **Jobs**: `service-build-auth-service`, `ai-devops-pr`, `ai-devops-local`
 - **Tools**: Git, Node.js 20
-- **Global env vars**: OCI_REGION, OCIR_URL, OCIR_NAMESPACE, etc.
+- **Global env vars**: OCI_REGION, OCIR_URL, OCIR_NAMESPACE, KUBECONFIG, etc.
 
-All secrets use `${VAR}` interpolation — zero hardcoded values in committed files.
+Only secrets use `${VAR}` interpolation — non-secret config is hardcoded directly in jenkins.yml.
+No systemd override or EnvironmentFile needed for non-secret values.
 
 ## How to Add a New Service (4 Steps)
 
@@ -132,11 +133,11 @@ Developer pushes to app repo
 
 ## Environment Promotion
 
-| Environment | Trigger                    | Namespace Pattern       |
+| Environment | Trigger                    | Namespace               |
 |-------------|----------------------------|-------------------------|
-| dev         | Auto on push to develop    | diksha-app-dev          |
-| staging     | Auto on merge to main      | diksha-app-staging      |
-| prod        | Manual approval + promote  | diksha-app-prod         |
+| dev         | Auto on push to develop    | dev                     |
+| staging     | Auto on merge to main      | staging                 |
+| prod        | Manual approval + promote  | prod                    |
 
 Promotion to prod uses the `promoteToProd` shared-lib step which copies the staging image tag to `values-prod.yaml` and requires manual approval in Jenkins.
 
@@ -153,11 +154,10 @@ Promotion to prod uses the `promoteToProd` shared-lib step which copies the stag
 
 ## Namespaces
 
-- `diksha-app-{env}` — Application workloads
-- `diksha-monitoring-{env}` — Prometheus, Grafana, Loki
-- `diksha-networking-{env}` — Ingress, API Gateway configs
-- `diksha-infra-{env}` — Infrastructure services
-- `jenkins` — CI server
+- `dev` — Application workloads (dev environment)
+- `staging` — Application workloads (staging environment)
+- `prod` — Application workloads (production environment)
+- `monitoring` — Prometheus, Grafana, Loki
 
 ## Links
 

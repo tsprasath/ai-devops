@@ -23,9 +23,9 @@ spec:
           - list:
               elements:
                 - env: dev
-                  namespace: diksha-app-dev
+                  namespace: dev
                 - env: staging
-                  namespace: diksha-app-staging
+                  namespace: staging
           # Generator 2: auto-discover services from repo directory structure
           - git:
               repoURL: https://github.com/tsprasath/ai-devops.git
@@ -83,7 +83,7 @@ spec:
           - list:
               elements:
                 - env: prod
-                  namespace: diksha-app-prod
+                  namespace: prod
           - git:
               repoURL: https://github.com/tsprasath/ai-devops.git
               revision: main
