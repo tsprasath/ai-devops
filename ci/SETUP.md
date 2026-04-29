@@ -47,24 +47,26 @@ sudo chown -R jenkins:jenkins /var/lib/jenkins/secrets
 sudo chmod 600 /var/lib/jenkins/secrets/kubeconfig
 
 # Set only the secret env vars (see ci/config/env.example)
-# Option A: systemd EnvironmentFile
+sudo mkdir -p /etc/systemd/system/jenkins.service.d
 sudo tee /etc/systemd/system/jenkins.service.d/override.conf <<EOF
 [Service]
 Environment="CASC_JENKINS_CONFIG=/var/lib/jenkins/casc_configs/jenkins.yml"
 Environment="JENKINS_ADMIN_PASSWORD=your-password"
 Environment="OCIR_USERNAME=tenancy/user"
-Environment="OCIR_PASSWORD=auth-token"
-Environment="GIT_TOKEN=ghp_xxx"
-Environment="SLACK_WEBHOOK_URL=https://hooks.slack.com/..."
-Environment="TEAMS_WEBHOOK_URL=https://outlook.office.com/..."
-Environment="SONAR_TOKEN=sqp_xxx"
+Environment="OCIR_PASSWORD=your-auth-token"
+Environment="GIT_TOKEN=ghp_xxxxxxxxxxxx"
+Environment="SLACK_WEBHOOK_URL=https://hooks.slack.com/services/XXX/YYY/ZZZ"
+Environment="TEAMS_WEBHOOK_URL=https://outlook.office.com/webhook/XXX"
+Environment="SONAR_TOKEN=sqp_xxxxxxxxxxxx"
 EOF
 
 # Restart to apply
 sudo systemctl daemon-reload && sudo systemctl restart jenkins
 ```
 
-Non-secret values (OCI region, OCIR URL, repo URLs, channels, thresholds, KUBECONFIG path) are hardcoded in jenkins.yml — no env vars needed for those.
+Non-secret values (OCI region, OCIR URL, repo URLs, Slack channels, Trivy thresholds, KUBECONFIG path) are hardcoded directly in `jenkins.yml` — no env vars needed for those.
+
+Verify JCasC applied: http://localhost:8081/configuration-as-code/
 
 ### Trigger a Build
 
@@ -72,30 +74,13 @@ Non-secret values (OCI region, OCIR URL, repo URLs, channels, thresholds, KUBECO
 # CLI trigger (waits for completion, streams console)
 java -jar /tmp/jenkins-cli.jar \
   -s http://localhost:8081 \
-  -auth admin:admin123 \
-  build ai-devops -s -v
+  -auth admin:<password> \
+  build service-build-auth-service -s -v
 ```
 
 ---
 
-## Manual Setup Reference
-
-### 1. Required Jenkins Plugins
-
-The setup script installs all of these automatically. For manual install:
-Manage Jenkins → Plugins → Available:
-
-**Pipeline:** workflow-aggregator, pipeline-stage-view, pipeline-utility-steps, pipeline-graph-view
-**SCM:** git, github, github-branch-source
-**Build Tools:** nodejs, docker-workflow, docker-commons
-**Kubernetes:** kubernetes, kubernetes-cli
-**Credentials:** credentials-binding, ssh-credentials
-**UI:** blueocean, ansicolor, timestamper, dark-theme
-**Notifications:** mailer, slack
-**Quality:** warnings-ng, junit, jacoco
-**Admin:** configuration-as-code, job-dsl, matrix-auth, role-strategy, ws-cleanup, build-discarder, throttle-concurrents, locale, rebuild, parameterized-trigger
-
-### 2. Credentials Setup
+## Credentials
 
 All credentials are managed via JCasC (`ci/config/jenkins.yml`) and populated from environment variables. No manual UI setup needed.
 
@@ -107,28 +92,43 @@ All credentials are managed via JCasC (`ci/config/jenkins.yml`) and populated fr
 | `teams-webhook-url`  | Secret text       | `TEAMS_WEBHOOK_URL`                  | MS Teams incoming webhook            |
 | `sonar-token`        | Secret text       | `SONAR_TOKEN`                        | SonarQube analysis token (optional)  |
 
-**Note:** Kubeconfig is NOT a Jenkins credential — it's a file at `/var/lib/jenkins/secrets/kubeconfig` exposed via the `KUBECONFIG` global env var.
+**Kubeconfig:** NOT a Jenkins credential — it's a file at `/var/lib/jenkins/secrets/kubeconfig` exposed via the `KUBECONFIG` global environment variable. All pipeline steps (kubectl, helm) pick it up automatically.
 
-### 3. Shared Library Setup
+## Global Environment Variables
 
-Go to: Manage Jenkins → System → Global Pipeline Libraries
+Hardcoded in `jenkins.yml` (no env var interpolation needed):
+
+| Variable              | Value                                              |
+|-----------------------|----------------------------------------------------|
+| `OCI_REGION`          | `ap-mumbai-1`                                      |
+| `OCIR_URL`            | `bom.ocir.io`                                      |
+| `OCIR_NAMESPACE`      | `diksha`                                           |
+| `PROJECT_NAME`        | `diksha-dev`                                       |
+| `GITOPS_REPO`         | `https://github.com/tsprasath/ai-devops.git`       |
+| `GITOPS_BRANCH`       | `main`                                             |
+| `AUTH_SERVICE_REPO`   | `https://github.com/tsprasath/sample-test-app.git` |
+| `SLACK_CHANNEL`       | `#ci-cd-notifications`                             |
+| `SLACK_CHANNEL_ALERTS`| `#ci-cd-alerts`                                    |
+| `TRIVY_SEVERITY`      | `CRITICAL,HIGH`                                    |
+| `TRIVY_HIGH_THRESHOLD`| `5`                                                |
+| `KUBECONFIG`          | `/var/lib/jenkins/secrets/kubeconfig`               |
+
+## Shared Library
 
 ```
 Name:           diksha-dev-lib
 Default version: shared-lib
 Retrieval:      Modern SCM → Git Source
-  Project Repo: https://github.com/tsprasath/ai-devops.git
+  Remote:       https://github.com/tsprasath/ai-devops.git
   Credentials:  git-credentials
 ```
 
 The shared library lives on the orphan branch `shared-lib` (vars/ and src/ at repo root).
-No library path needed since the standard Jenkins layout is at root.
-
 This makes `@Library('diksha-dev-lib') _` available in Jenkinsfiles.
 
-### 4. Pipeline Jobs (via JCasC)
+## Pipeline Jobs
 
-All jobs are auto-created by JCasC Job DSL in `ci/config/jenkins.yml`. No manual setup needed.
+All jobs are auto-created by JCasC Job DSL. No manual setup needed.
 
 | Job Name                      | Type                | Description                                          |
 |-------------------------------|---------------------|------------------------------------------------------|
@@ -136,22 +136,31 @@ All jobs are auto-created by JCasC Job DSL in `ci/config/jenkins.yml`. No manual
 | `ai-devops-pr`               | Multibranch Pipeline| PR validation — lint, test, scan (no deploy)         |
 | `ai-devops-local`            | Pipeline            | Local/WSL dev pipeline — no K8s, no shared lib       |
 
-#### Adding a New Service Job
+**Adding a new service job:** Copy the `service-build-auth-service` block in `ci/config/jenkins.yml`, change the job name and default parameters (`APP_REPO_URL`, `SERVICE_NAME`), restart Jenkins.
 
-Copy the `service-build-auth-service` block in `ci/config/jenkins.yml`, change the job name, default parameters (`APP_REPO_URL`, `SERVICE_NAME`), and apply JCasC.
+## Kubernetes Cloud (OKE — Optional)
 
-### 5. Kubernetes Cloud (for OKE)
+The K8s cloud config is commented out in `jenkins.yml` for local development. Uncomment when deploying to OKE with pod-based agents:
 
-Go to: Manage Jenkins → Clouds → New cloud → Kubernetes
-
+```yaml
+# In jenkins.yml → jenkins: → clouds:
+clouds:
+  - kubernetes:
+      name: "oke"
+      serverUrl: "${OKE_API_SERVER}"
+      namespace: "jenkins"
+      jenkinsUrl: "http://jenkins.jenkins.svc.cluster.local:8080"
+      jenkinsTunnel: "jenkins-agent.jenkins.svc.cluster.local:50000"
 ```
-Name:              oke-cluster
-Kubernetes URL:    https://<OKE-API-endpoint>
-K8s namespace:     jenkins
-Jenkins URL:       http://jenkins:8080   (internal service URL)
-Jenkins tunnel:    jenkins-agent:50000
-Credentials:       kubeconfig or service account
-```
+
+## Namespaces
+
+| Namespace    | Purpose                          |
+|--------------|----------------------------------|
+| `dev`        | Application workloads (dev)      |
+| `staging`    | Application workloads (staging)  |
+| `prod`       | Application workloads (prod)     |
+| `monitoring` | Prometheus, Grafana, Loki        |
 
 ---
 
@@ -160,31 +169,34 @@ Credentials:       kubeconfig or service account
 ```
 ci/
 ├── config/
-│   ├── jenkins.yml               # JCasC: jobs, credentials, shared lib, tools (secrets via ${VAR})
-│   └── env.example               # Documents all required environment variables
+│   ├── jenkins.yml               # JCasC: jobs, credentials, shared lib, tools, global env vars
+│   └── env.example               # Documents required secret env vars only
 ├── setup-jenkins-ubuntu24.sh     # Automated full Jenkins setup (Ubuntu 24.04)
+├── setup-pipeline.groovy         # Pipeline seed job (alternative to JCasC Job DSL)
 ├── Jenkinsfile                   # Production (K8s agent, shared lib, full pipeline)
 ├── Jenkinsfile.full              # Full pipeline variant (build + deploy all stages)
 ├── Jenkinsfile.pr                # PR validation pipeline
 ├── Jenkinsfile.local             # Local WSL (agent any, self-contained, graceful skips)
 ├── pod-templates/build-pod.yaml  # Kubernetes pod template for Jenkins agents
-├── templates/                    # Jenkinsfile.app-repo template for onboarding app repos
-├── SETUP.md                      # This file
-└── shared-lib/                  (on orphan branch 'shared-lib', not on main)
-    ├── src/org/dev/
-    │   └── Constants.groovy   # OCI config, credential IDs, scan thresholds
-    └── vars/
-        ├── buildAndPush.groovy
-        ├── codeQualityScan.groovy
-        ├── dockerBuild.groovy
-        ├── gitleaksScan.groovy
-        ├── gitopsUpdate.groovy
-        ├── helmLint.groovy
-        ├── notifyTeam.groovy
-        ├── promoteToProd.groovy
-        ├── rollback.groovy
-        ├── securityScan.groovy
-        └── trivyScan.groovy
+├── templates/
+│   └── Jenkinsfile.app-repo      # Template for onboarding new app repos
+└── SETUP.md                      # This file
+
+shared-lib branch (orphan branch 'shared-lib'):
+├── src/org/dev/
+│   └── Constants.groovy          # OCI config, credential IDs, scan thresholds
+└── vars/
+    ├── buildAndPush.groovy
+    ├── codeQualityScan.groovy
+    ├── dockerBuild.groovy
+    ├── gitleaksScan.groovy
+    ├── gitopsUpdate.groovy
+    ├── helmLint.groovy
+    ├── notifyTeam.groovy
+    ├── promoteToProd.groovy
+    ├── rollback.groovy
+    ├── securityScan.groovy
+    └── trivyScan.groovy
 ```
 
 ## Pipeline Flow
@@ -227,9 +239,14 @@ If Jenkins was previously installed, stale user directories can cause password m
 Use batch install (single CLI call with all plugins) instead of installing one by one:
 ```bash
 java -jar /tmp/jenkins-cli.jar -s http://localhost:8081 \
-  -auth admin:admin123 \
+  -auth admin:<password> \
   install-plugin plugin1 plugin2 plugin3 ... -deploy
 ```
 
+### JCasC not applying
+- Verify `CASC_JENKINS_CONFIG` env var is set: check `/etc/systemd/system/jenkins.service.d/override.conf`
+- Check Jenkins logs: `journalctl -u jenkins -f`
+- Validate config at: http://localhost:8081/configuration-as-code/
+
 ### Build #1 shows "Gitleaks: 1 leak found"
-This is non-blocking (exit code 0). The leak is `admin:admin123` in `push.sh` — a known test credential. Add a `.gitleaksignore` file to suppress known findings.
+This is non-blocking (exit code 0). The leak is a known test credential. Add a `.gitleaksignore` file to suppress known findings.
