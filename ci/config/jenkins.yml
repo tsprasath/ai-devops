@@ -15,7 +15,7 @@ jenkins:
     AI DevOps Platform — Jenkins CI + ArgoCD GitOps.
     Managed by JCasC (ci/config/jenkins.yml). Do not configure manually.
 
-  numExecutors: 0  # Builds run on agents only
+  # numExecutors: 0  # Uncomment when using K8s pod agents only
 
   # ── Security Realm ──────────────────────────────────────────────
   securityRealm:
@@ -71,23 +71,36 @@ jenkins:
             value: "${TRIVY_HIGH_THRESHOLD:-5}"
 
   # ── Kubernetes Cloud (OKE pod agents) ───────────────────────────
-  clouds:
-    - kubernetes:
-        name: "oke"
-        serverUrl: "${OKE_API_SERVER}"
-        namespace: "${JENKINS_AGENT_NAMESPACE:-jenkins}"
-        jenkinsUrl: "${JENKINS_URL:-http://jenkins.jenkins.svc.cluster.local:8080}"
-        jenkinsTunnel: "${JENKINS_TUNNEL:-jenkins-agent.jenkins.svc.cluster.local:50000}"
-        credentialsId: "oke-kubeconfig"
-        podLabels:
-          - key: "jenkins"
-            value: "agent"
-        templates:
-          - name: "build-pod"
-            label: "build-agent docker"
-            yamlFile: "ci/pod-templates/build-pod.yaml"
-            serviceAccount: "${JENKINS_SA:-jenkins-agent}"
-            idleMinutes: 5
+  # Uncomment when deploying to OKE cluster with pod-based agents.
+  # clouds:
+  #   - kubernetes:
+  #       name: "oke"
+  #       serverUrl: "${OKE_API_SERVER}"
+  #       namespace: "${JENKINS_AGENT_NAMESPACE:-jenkins}"
+  #       jenkinsUrl: "${JENKINS_URL:-http://jenkins.jenkins.svc.cluster.local:8080}"
+  #       jenkinsTunnel: "${JENKINS_TUNNEL:-jenkins-agent.jenkins.svc.cluster.local:50000}"
+  #       credentialsId: "oke-kubeconfig"
+  #       podLabels:
+  #         - key: "jenkins"
+  #           value: "agent"
+  #       templates:
+  #         - name: "build-pod"
+  #           label: "build-agent docker"
+  #           yaml: |
+  #             apiVersion: v1
+  #             kind: Pod
+  #             spec:
+  #               containers:
+  #                 - name: docker
+  #                   image: docker:24-dind
+  #                   securityContext:
+  #                     privileged: true
+  #                 - name: jnlp
+  #                   image: jenkins/inbound-agent:latest
+  #           serviceAccount: "${JENKINS_SA:-jenkins-agent}"
+  #           idleMinutes: 5
+
+  numExecutors: 2  # Local: use built-in executors
 
 # ─── Tools ────────────────────────────────────────────────────────
 tool:
@@ -120,7 +133,7 @@ unclassified:
                 remote: "${SHARED_LIB_REPO:-https://github.com/tsprasath/ai-devops.git}"
                 credentialsId: "git-credentials"
 
-  gitSCM:
+  scmGit:
     globalConfigName: "Jenkins CI"
     globalConfigEmail: "jenkins@diksha.dev"
 
@@ -156,21 +169,6 @@ jobs:
         }
         properties {
           disableConcurrentBuilds()
-          pipelineTriggers {
-            triggers {
-              genericTrigger {
-                genericVariables {
-                  genericVariable { key('ref'); value('$.ref') }
-                  genericVariable { key('repo_url'); value('$.repository.clone_url') }
-                }
-                regexpFilterText('$ref')
-                regexpFilterExpression('^refs/heads/(main|develop|release/.*)$')
-                tokenCredentialId('')
-                causeString('GitHub push to $ref')
-                printContributedVariables(true)
-              }
-            }
-          }
         }
         logRotator {
           numToKeep(20)
@@ -182,14 +180,14 @@ jobs:
       multibranchPipelineJob('ai-devops-pr') {
         description('PR validation — lint, test, scan (no push, no deploy)')
         branchSources {
-          github {
-            id('ai-devops-pr')
-            repoOwner('tsprasath')
-            repository('ai-devops')
-            credentialsId('git-credentials')
-            buildForkPRMerge(true)
-            buildOriginBranch(false)
-            buildOriginPRMerge(true)
+          branchSource {
+            source {
+              git {
+                id('ai-devops-pr')
+                remote('https://github.com/tsprasath/ai-devops.git')
+                credentialsId('git-credentials')
+              }
+            }
           }
         }
         factory {
@@ -253,12 +251,11 @@ credentials:
               description: "GitHub PAT for repo access and gitops updates"
 
           # ── OKE Kubeconfig (for K8s cloud agent) ────────────────
-          - file:
+          - string:
               scope: GLOBAL
               id: "oke-kubeconfig"
-              fileName: "kubeconfig"
-              secretBytes: "${OKE_KUBECONFIG_B64}"
-              description: "OKE cluster kubeconfig"
+              secret: "${OKE_KUBECONFIG_B64}"
+              description: "OKE cluster kubeconfig (base64)"
 
           # ── Slack Webhook ───────────────────────────────────────
           - string:
