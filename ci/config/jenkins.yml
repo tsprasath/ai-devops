@@ -129,7 +129,7 @@ unclassified:
         retriever:
           modernSCM:
             scm:
-              git:
+              gitSource:
                 remote: "${SHARED_LIB_REPO:-https://github.com/tsprasath/ai-devops.git}"
                 credentialsId: "git-credentials"
 
