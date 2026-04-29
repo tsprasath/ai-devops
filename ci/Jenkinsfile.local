@@ -195,10 +195,10 @@ pipeline {
                         --set image.tag=$IMAGE_TAG \
                         > /dev/null && echo "Template render: OK"
 
-                    echo "--- Helm dry-run ---"
+                    echo "--- Helm dry-run (full rendered manifests) ---"
                     helm template test-release ${HELM_CHART} \
-                        --set image.tag=$IMAGE_TAG \
-                        | head -30
+                        --set image.repository=$IMAGE_NAME \
+                        --set image.tag=$IMAGE_TAG
                 '''
             }
         }
