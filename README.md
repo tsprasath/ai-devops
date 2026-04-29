@@ -34,8 +34,13 @@ DevOps platform repository for the Diksha project. Contains CI pipelines, Helm c
 ci/
   config/jenkins.yml       JCasC config (env var interpolation, zero hardcoded secrets)
   config/env.example       Environment variables template
+  Jenkinsfile              Main CI/CD pipeline
+  Jenkinsfile.full         Full pipeline variant (build + deploy all stages)
+  Jenkinsfile.pr           PR validation pipeline
+  Jenkinsfile.local        WSL local development pipeline
+  setup-jenkins-ubuntu24.sh  Jenkins installation script
+  pod-templates/build-pod.yaml  Kubernetes pod template for Jenkins agents
   templates/               Jenkinsfile.app-repo template for onboarding app repos
-  pipelines/               Jenkins pipeline definitions
 
   NOTE: Shared library (vars/, src/) lives on the orphan branch 'shared-lib' in this repo.
         Jenkins loads it via @Library('diksha-dev-lib') pointing to branch 'shared-lib'.
@@ -56,7 +61,6 @@ kubernetes/
   terraform/               OCI infra modules (VCN, OKE, OCIR, API Gateway, WAF, Vault)
   monitoring/              Prometheus, Grafana, Loki configs
 
-services/                  Service source (auth-service) — being migrated to split repos
 security/                  OPA policies, scan configs
 docs/                      Architecture documentation
 ```
@@ -83,7 +87,7 @@ kubectl apply -k kubernetes/bootstrap/overlays/dev/
 ### 2. Deploy ArgoCD ApplicationSet
 
 ```bash
-kubectl apply -f kubernetes/argocd-apps/applicationset.yaml
+kubectl apply -f kubernetes/argocd-apps/appset-services.yaml
 ```
 
 ArgoCD auto-discovers every service under `kubernetes/helm-charts/` and creates Application resources per environment.

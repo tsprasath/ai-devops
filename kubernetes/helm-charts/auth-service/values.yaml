@@ -47,6 +47,15 @@ probes:
     port: 3000
     initialDelaySeconds: 5
     periodSeconds: 5
+  startup:
+    path: /health
+    port: 3000
+    failureThreshold: 30
+    periodSeconds: 2
+
+pdb:
+  enabled: true
+  minAvailable: 1
 
 env:
   NODE_ENV: production

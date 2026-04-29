@@ -19,19 +19,71 @@ spec:
   generators:
     - matrix:
         generators:
-          # Generator 1: environments
+          # Generator 1: environments with auto-sync enabled
           - list:
               elements:
                 - env: dev
                   namespace: diksha-app-dev
-                  autoSync: "true"
                 - env: staging
                   namespace: diksha-app-staging
-                  autoSync: "true"
+          # Generator 2: auto-discover services from repo directory structure
+          - git:
+              repoURL: https://github.com/tsprasath/ai-devops.git
+              revision: main
+              directories:
+                - path: kubernetes/helm-charts/*
+  template:
+    metadata:
+      name: "{{path.basename}}-{{env}}"
+      namespace: argocd
+      labels:
+        app.kubernetes.io/name: "{{path.basename}}"
+        app.kubernetes.io/part-of: diksha-dev
+        diksha.dev/environment: "{{env}}"
+      finalizers:
+        - resources-finalizer.argocd.argoproj.io
+    spec:
+      project: default
+      source:
+        repoURL: https://github.com/tsprasath/ai-devops.git
+        targetRevision: main
+        path: "{{path}}"
+        helm:
+          valueFiles:
+            - values.yaml
+            - "values-{{env}}.yaml"
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: "{{namespace}}"
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=false
+          - PrunePropagationPolicy=foreground
+          - ServerSideApply=true
+        retry:
+          limit: 3
+          backoff:
+            duration: 5s
+            factor: 2
+            maxDuration: 3m
+---
+# Prod services — manual sync only
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: diksha-services-prod
+  namespace: argocd
+spec:
+  generators:
+    - matrix:
+        generators:
+          - list:
+              elements:
                 - env: prod
                   namespace: diksha-app-prod
-                  autoSync: "false"
-          # Generator 2: auto-discover services from repo directory structure
           - git:
               repoURL: https://github.com/tsprasath/ai-devops.git
               revision: main

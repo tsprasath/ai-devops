@@ -1,4 +1,4 @@
-@Library('dev-shared-lib') _
+@Library('diksha-dev-lib') _
 
 import org.dev.Constants
 
@@ -84,11 +84,18 @@ pipeline {
             steps {
                 container('helm') {
                     script {
-                        helmLint(
-                            chartPath: 'helm/app',
-                            strict: false,
-                            reportDir: 'reports/helm'
-                        )
+                        def chartDirs = sh(script: "ls -d kubernetes/helm-charts/*/Chart.yaml 2>/dev/null | xargs -I{} dirname {}", returnStdout: true).trim()
+                        if (chartDirs) {
+                            chartDirs.split('\n').each { chart ->
+                                helmLint(
+                                    chartPath: chart,
+                                    strict: false,
+                                    reportDir: "reports/helm/${chart.tokenize('/').last()}"
+                                )
+                            }
+                        } else {
+                            echo 'No Helm charts found under kubernetes/helm-charts/'
+                        }
                     }
                 }
             }
