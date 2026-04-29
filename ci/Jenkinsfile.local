@@ -11,7 +11,7 @@ pipeline {
 
     environment {
         SERVICE      = 'auth-service'
-        SERVICE_DIR  = '.'
+        SERVICE_DIR  = 'app'
         HELM_CHART   = "kubernetes/helm-charts/${SERVICE}"
         OCIR_REGISTRY = 'bom.ocir.io'
         OCIR_NAMESPACE = 'bmzbbujw9kal'
@@ -35,8 +35,12 @@ pipeline {
         stage('Checkout') {
             steps {
                 checkout scm
+                // Clone the app repo into 'app/' subdirectory
+                dir('app') {
+                    git url: 'https://github.com/tsprasath/sample-test-app.git', branch: 'main'
+                }
                 script {
-                    def sha = sh(script: 'git rev-parse --short=7 HEAD', returnStdout: true).trim()
+                    def sha = sh(script: 'cd app && git rev-parse --short=7 HEAD', returnStdout: true).trim()
                     def branch = (env.GIT_BRANCH ?: 'main').replaceAll('^origin/', '').replaceAll('[^a-zA-Z0-9._-]', '_')
                     env.GIT_SHA = sha
                     env.GIT_BRANCH_CLEAN = branch
@@ -98,7 +102,7 @@ pipeline {
                 dir("${SERVICE_DIR}") {
                     sh '''#!/bin/bash
                         echo "--- Running Jest ---"
-                                ./node_modules/.bin/jest --forceExit --detectOpenHandles --coverage --verbose 2>&1
+                        npx jest --forceExit --detectOpenHandles --coverage --verbose 2>&1
                     '''
                 }
             }
