@@ -92,9 +92,25 @@ kubectl apply -f kubernetes/argocd-apps/appset-services.yaml
 
 ArgoCD auto-discovers every service under `kubernetes/helm-charts/` and creates Application resources per environment.
 
-### 3. Configure Jenkins
+### 3. Configure Jenkins (JCasC)
 
-Copy `ci/config/env.example` to your Jenkins environment, fill in values (OCIR credentials, OKE kubeconfig, GitHub tokens). Jenkins loads `ci/config/jenkins.yml` via JCasC — all secrets are injected via environment variables, nothing hardcoded.
+```bash
+# Copy JCasC config
+sudo cp ci/config/jenkins.yml /var/lib/jenkins/casc_configs/jenkins.yml
+
+# Set environment variables (see ci/config/env.example for full list)
+# Then restart Jenkins — jobs, credentials, and shared lib are auto-created
+sudo systemctl restart jenkins
+```
+
+JCasC (`ci/config/jenkins.yml`) manages everything declaratively:
+- **Credentials**: OCIR, GitHub PAT, OKE kubeconfig, Slack/Teams webhooks, SonarQube token
+- **Shared Library**: `diksha-dev-lib` from orphan branch `shared-lib` (Git Source retriever)
+- **Jobs**: `service-build-auth-service`, `ai-devops-pr`, `ai-devops-local`
+- **Tools**: Git, Node.js 20
+- **Global env vars**: OCI_REGION, OCIR_URL, OCIR_NAMESPACE, etc.
+
+All secrets use `${VAR}` interpolation — zero hardcoded values in committed files.
 
 ## How to Add a New Service (4 Steps)
 
