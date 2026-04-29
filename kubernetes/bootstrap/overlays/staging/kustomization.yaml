@@ -8,8 +8,7 @@ kind: Kustomization
 resources:
   - ../../base
 
-nameSuffix: "-staging"
-namespace: diksha-app-staging
+namespace: staging
 
 commonLabels:
   diksha.dev/environment: staging
@@ -34,10 +33,3 @@ patches:
       - op: replace
         path: /spec/hard/pods
         value: "40"
-
-  - target:
-      kind: Namespace
-    patch: |
-      - op: add
-        path: /metadata/labels/diksha.dev~1environment
-        value: staging

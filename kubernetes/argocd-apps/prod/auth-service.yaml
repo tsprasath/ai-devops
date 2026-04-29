@@ -21,7 +21,7 @@ spec:
         - values-prod.yaml    # env-specific (Jenkins updates image.tag here)
   destination:
     server: https://kubernetes.default.svc
-    namespace: diksha-app-prod
+    namespace: prod
   syncPolicy:
     # PROD: manual sync only — no automated deployment
     automated: null

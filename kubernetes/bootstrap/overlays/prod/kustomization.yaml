@@ -8,21 +8,13 @@ kind: Kustomization
 resources:
   - ../../base
 
-nameSuffix: "-prod"
-namespace: diksha-app-prod
+namespace: prod
 
 commonLabels:
   diksha.dev/environment: prod
 
 patches:
   # Prod uses base quota values (already prod-sized)
-  - target:
-      kind: Namespace
-    patch: |
-      - op: add
-        path: /metadata/labels/diksha.dev~1environment
-        value: prod
-
   # Stricter limits for prod
   - target:
       kind: LimitRange

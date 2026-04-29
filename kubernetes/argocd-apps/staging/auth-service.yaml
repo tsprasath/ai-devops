@@ -21,7 +21,7 @@ spec:
         - values-staging.yaml    # env-specific (Jenkins updates image.tag here)
   destination:
     server: https://kubernetes.default.svc
-    namespace: diksha-app-staging
+    namespace: staging
   syncPolicy:
     automated:
       prune: true

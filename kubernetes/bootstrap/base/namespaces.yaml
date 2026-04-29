@@ -1,17 +1,15 @@
 ---
 # ═══════════════════════════════════════════════════════
-# Namespaces — Base Template
+# Namespaces
 # ═══════════════════════════════════════════════════════
-# Kustomize overlays append the environment suffix.
-# e.g., diksha-app → diksha-app-dev, diksha-app-staging, diksha-app-prod
 
-# ── Application namespace (auth-service, future services) ──
+# ── Application workloads ──
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: diksha-app
+  name: dev
   labels:
-    app.kubernetes.io/part-of: diksha-dev
+    app.kubernetes.io/part-of: diksha
     app.kubernetes.io/managed-by: ai-devops
     diksha.dev/tier: app
 ---
@@ -19,38 +17,8 @@ metadata:
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: diksha-monitoring
+  name: monitoring
   labels:
-    app.kubernetes.io/part-of: diksha-dev
+    app.kubernetes.io/part-of: diksha
     app.kubernetes.io/managed-by: ai-devops
     diksha.dev/tier: monitoring
----
-# ── Networking (Ingress, Cert-Manager) ──
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: diksha-networking
-  labels:
-    app.kubernetes.io/part-of: diksha-dev
-    app.kubernetes.io/managed-by: ai-devops
-    diksha.dev/tier: networking
----
-# ── Infrastructure (Reloader, etc.) ──
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: diksha-infra
-  labels:
-    app.kubernetes.io/part-of: diksha-dev
-    app.kubernetes.io/managed-by: ai-devops
-    diksha.dev/tier: infra
----
-# ── CI/CD (Jenkins agent pods) ──
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: jenkins
-  labels:
-    app.kubernetes.io/part-of: diksha-dev
-    app.kubernetes.io/managed-by: ai-devops
-    diksha.dev/tier: ci
