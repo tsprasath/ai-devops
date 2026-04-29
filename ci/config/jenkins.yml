@@ -110,7 +110,7 @@ unclassified:
   globalLibraries:
     libraries:
       - name: "diksha-dev-lib"
-        defaultVersion: "main"
+        defaultVersion: "shared-lib"
         implicit: false
         allowVersionOverride: true
         retriever:
@@ -119,7 +119,6 @@ unclassified:
               git:
                 remote: "${SHARED_LIB_REPO:-https://github.com/tsprasath/ai-devops.git}"
                 credentialsId: "git-credentials"
-            libraryPath: "ci/shared-lib"
 
   gitSCM:
     globalConfigName: "Jenkins CI"

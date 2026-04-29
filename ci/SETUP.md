@@ -96,11 +96,13 @@ Go to: Manage Jenkins → System → Global Pipeline Libraries
 
 ```
 Name:           diksha-dev-lib
-Default version: main
+Default version: shared-lib
 Retrieval:      Modern SCM → Git
   Project Repo: https://github.com/tsprasath/ai-devops.git
-  Library Path: ci/shared-lib
 ```
+
+The shared library lives on the orphan branch `shared-lib` (vars/ and src/ at repo root).
+No library path needed since the standard Jenkins layout is at root.
 
 This makes `@Library('diksha-dev-lib') _` available in Jenkinsfiles.
 
@@ -150,7 +152,7 @@ ci/
 ├── Jenkinsfile                # Production (K8s agent, shared lib, full pipeline)
 ├── Jenkinsfile.local          # Local WSL (agent any, self-contained, graceful skips)
 ├── SETUP.md                   # This file
-└── shared-lib/
+└── shared-lib/               (on orphan branch 'shared-lib', not on main)
     ├── src/org/dev/
     │   └── Constants.groovy   # OCI config, credential IDs, scan thresholds
     └── vars/

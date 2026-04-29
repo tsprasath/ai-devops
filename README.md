@@ -34,9 +34,11 @@ DevOps platform repository for the Diksha project. Contains CI pipelines, Helm c
 ci/
   config/jenkins.yml       JCasC config (env var interpolation, zero hardcoded secrets)
   config/env.example       Environment variables template
-  shared-lib/              Groovy shared library (gitopsUpdate, buildAndPush, trivyScan, promoteToProd)
   templates/               Jenkinsfile.app-repo template for onboarding app repos
   pipelines/               Jenkins pipeline definitions
+
+  NOTE: Shared library (vars/, src/) lives on the orphan branch 'shared-lib' in this repo.
+        Jenkins loads it via @Library('diksha-dev-lib') pointing to branch 'shared-lib'.
 
 infra/
   helm-charts/             Per-service Helm charts with per-env values
@@ -122,7 +124,7 @@ Promotion to prod uses the `promoteToProd` shared-lib step which copies the stag
 
 - **Runtime**: Node.js 20, Docker
 - **Orchestration**: OKE (Oracle Kubernetes Engine)
-- **CI**: Jenkins + JCasC + Shared Library
+- **CI**: Jenkins + JCasC + Shared Library (orphan branch `shared-lib`)
 - **CD**: ArgoCD + ApplicationSet
 - **Registry**: OCIR (bom.ocir.io)
 - **IaC**: Terraform (OCI provider)
