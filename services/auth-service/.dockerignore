@@ -1,8 +1,0 @@
-node_modules
-.env
-.git
-npm-debug.log
-coverage
-tests
-.eslintrc.json
-README.md
