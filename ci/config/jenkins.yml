@@ -4,9 +4,11 @@
 # Mount at: /var/jenkins_home/casc_configs/jenkins.yml
 # Or set:   CASC_JENKINS_CONFIG=/var/jenkins_home/casc_configs/jenkins.yml
 #
-# All ${VAR} references resolve from the Jenkins process environment.
-# Set via K8s Secret → env, Docker -e, or systemd EnvironmentFile.
-# See: ci/config/env.example for the full variable list.
+# Non-secret values are hardcoded below. Only true secrets use ${VAR}
+# interpolation — supply them via env vars or a .env file loaded by Jenkins.
+# Required secrets: JENKINS_ADMIN_PASSWORD, OCIR_USERNAME, OCIR_PASSWORD,
+#   GIT_TOKEN, SLACK_WEBHOOK_URL, TEAMS_WEBHOOK_URL, SONAR_TOKEN
+# See: ci/config/env.example for the secret variable list.
 # ═══════════════════════════════════════════════════════════════════
 
 # ─── Jenkins Core ─────────────────────────────────────────────────
@@ -42,33 +44,34 @@ jenkins:
         env:
           # ── OCI / Registry ──
           - key: OCI_REGION
-            value: "${OCI_REGION:-ap-mumbai-1}"
+            value: "ap-mumbai-1"
           - key: OCIR_URL
-            value: "${OCIR_URL:-bom.ocir.io}"
+            value: "bom.ocir.io"
           - key: OCIR_NAMESPACE
-            value: "${OCIR_NAMESPACE:-diksha}"
+            value: "diksha"
           - key: PROJECT_NAME
-            value: "${PROJECT_NAME:-diksha-dev}"
+            value: "diksha-dev"
           # ── GitOps (this devops repo — where Helm values live) ──
           - key: GITOPS_REPO
-            value: "${GITOPS_REPO:-https://github.com/tsprasath/ai-devops.git}"
+            value: "https://github.com/tsprasath/ai-devops.git"
           - key: GITOPS_BRANCH
-            value: "${GITOPS_BRANCH:-main}"
+            value: "main"
           # ── App Repos (source code repos) ──
           - key: AUTH_SERVICE_REPO
-            value: "${AUTH_SERVICE_REPO:-https://github.com/tsprasath/sample-test-app.git}"
+            value: "https://github.com/tsprasath/sample-test-app.git"
           # ── Notifications ──
-          - key: TEAMS_WEBHOOK_URL
-            value: "${TEAMS_WEBHOOK_URL}"
           - key: SLACK_CHANNEL
-            value: "${SLACK_CHANNEL:-#ci-cd-notifications}"
+            value: "#ci-cd-notifications"
           - key: SLACK_CHANNEL_ALERTS
-            value: "${SLACK_CHANNEL_ALERTS:-#ci-cd-alerts}"
+            value: "#ci-cd-alerts"
           # ── Trivy defaults ──
           - key: TRIVY_SEVERITY
-            value: "${TRIVY_SEVERITY:-CRITICAL,HIGH}"
+            value: "CRITICAL,HIGH"
           - key: TRIVY_HIGH_THRESHOLD
-            value: "${TRIVY_HIGH_THRESHOLD:-5}"
+            value: "5"
+          # ── Kubeconfig ──
+          - key: KUBECONFIG
+            value: "/var/lib/jenkins/secrets/kubeconfig"
 
   # ── Kubernetes Cloud (OKE pod agents) ───────────────────────────
   # Uncomment when deploying to OKE cluster with pod-based agents.
@@ -130,7 +133,7 @@ unclassified:
           modernSCM:
             scm:
               gitSource:
-                remote: "${SHARED_LIB_REPO:-https://github.com/tsprasath/ai-devops.git}"
+                remote: "https://github.com/tsprasath/ai-devops.git"
                 credentialsId: "git-credentials"
 
   scmGit:
@@ -148,7 +151,7 @@ jobs:
       pipelineJob('service-build-auth-service') {
         description('Build auth-service from app repo, push to OCIR, update GitOps values')
         parameters {
-          stringParam('APP_REPO_URL', '${AUTH_SERVICE_REPO:-https://github.com/tsprasath/sample-test-app.git}', 'App source repo URL')
+          stringParam('APP_REPO_URL', 'https://github.com/tsprasath/sample-test-app.git', 'App source repo URL')
           stringParam('APP_REPO_BRANCH', 'main', 'Branch to build')
           stringParam('SERVICE_NAME', 'auth-service', 'Service name (matches Helm chart dir)')
           stringParam('SERVICE_DIR', '.', 'Path to Dockerfile in app repo')
@@ -158,7 +161,7 @@ jobs:
             scm {
               git {
                 remote {
-                  url('${SHARED_LIB_REPO:-https://github.com/tsprasath/ai-devops.git}')
+                  url('https://github.com/tsprasath/ai-devops.git')
                   credentials('git-credentials')
                 }
                 branch('*/main')
@@ -211,7 +214,7 @@ jobs:
             scm {
               git {
                 remote {
-                  url('${SHARED_LIB_REPO:-https://github.com/tsprasath/ai-devops.git}')
+                  url('https://github.com/tsprasath/ai-devops.git')
                   credentials('git-credentials')
                 }
                 branch('*/main')
@@ -249,13 +252,6 @@ credentials:
               username: "${GIT_USERNAME:-jenkins}"
               password: "${GIT_TOKEN}"
               description: "GitHub PAT for repo access and gitops updates"
-
-          # ── OKE Kubeconfig (for K8s cloud agent) ────────────────
-          - string:
-              scope: GLOBAL
-              id: "oke-kubeconfig"
-              secret: "${OKE_KUBECONFIG_B64}"
-              description: "OKE cluster kubeconfig (base64)"
 
           # ── Slack Webhook ───────────────────────────────────────
           - string:
