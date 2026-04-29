@@ -76,6 +76,83 @@ sudo systemctl daemon-reload && sudo systemctl restart jenkins
 
 Non-secret values (OCI region, OCIR URL, repo URLs, Slack channels, Trivy thresholds, KUBECONFIG path) are hardcoded directly in `jenkins.yml` — no env vars needed for those.
 
+### Application Runtime Secrets (Vault + ConfigMap)
+
+For deployed services (auth-service, etc.), secrets are **NOT** baked into images or K8s Secrets YAML. Instead:
+
+- **ConfigMap** — all non-secret env vars (NODE_ENV, LOG_LEVEL, PORT, SERVICE_NAME)
+- **HashiCorp Vault** — secrets fetched at runtime via Secrets Store CSI Driver
+
+**How it works:**
+
+1. The Helm chart creates a `ConfigMap` from `values.config` → injected via `envFrom`
+2. A `SecretProviderClass` tells the CSI driver to fetch secrets from Vault path
+3. The CSI driver mounts secrets as a volume AND syncs them to a K8s Secret
+4. The Deployment uses `envFrom: secretRef` to load Vault secrets as env vars
+
+**Prerequisites on the cluster:**
+```bash
+# Install Secrets Store CSI Driver
+helm install csi-secrets-store secrets-store-csi-driver/secrets-store-csi-driver \
+  --namespace kube-system
+
+# Install Vault CSI Provider
+helm install vault hashicorp/vault \
+  --set "injector.enabled=false" \
+  --set "csi.enabled=true"
+```
+
+**Vault setup:**
+```bash
+# Enable K8s auth in Vault
+vault auth enable kubernetes
+vault write auth/kubernetes/config \
+  kubernetes_host="https://$KUBERNETES_PORT_443_TCP_ADDR:443"
+
+# Create policy for auth-service
+vault policy write auth-service - <<EOF
+path "secret/data/diksha/auth-service" {
+  capabilities = ["read"]
+}
+EOF
+
+# Create role bound to the service account
+vault write auth/kubernetes/role/auth-service \
+  bound_service_account_names=auth-service \
+  bound_service_account_namespaces=default \
+  policies=auth-service \
+  ttl=1h
+
+# Write the actual secrets
+vault kv put secret/diksha/auth-service \
+  JWT_SECRET="your-jwt-secret" \
+  DB_PASSWORD="your-db-password" \
+  REDIS_PASSWORD="your-redis-password"
+```
+
+**Helm values to configure:**
+```yaml
+# values.yaml — non-secret config (becomes ConfigMap)
+config:
+  NODE_ENV: production
+  LOG_LEVEL: info
+  PORT: "3000"
+
+# Vault secrets (fetched at runtime — never in Git)
+vault:
+  enabled: true
+  address: "http://vault.vault.svc.cluster.local:8200"
+  role: "auth-service"
+  secretPath: "secret/data/diksha/auth-service"
+  secrets:
+    - key: JWT_SECRET
+    - key: DB_PASSWORD
+      envVar: DATABASE_PASSWORD   # optional rename
+    - key: REDIS_PASSWORD
+```
+
+To disable Vault (e.g., local dev), set `vault.enabled: false` — only the ConfigMap will be mounted.
+
 Verify JCasC applied: http://localhost:8081/configuration-as-code/
 
 ### Trigger a Build

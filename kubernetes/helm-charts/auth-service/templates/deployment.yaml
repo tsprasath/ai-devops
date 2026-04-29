@@ -49,18 +49,19 @@ spec:
             - name: http
               containerPort: {{ .Values.service.port }}
               protocol: TCP
-          env:
-            {{- range $key, $value := .Values.env }}
-            - name: {{ $key }}
-              value: {{ $value | quote }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "auth-service.fullname" . }}-config
+            {{- if .Values.vault.enabled }}
+            - secretRef:
+                name: {{ include "auth-service.fullname" . }}-vault-secrets
             {{- end }}
-            {{- range .Values.secrets }}
-            - name: {{ .name }}
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .secretName }}
-                  key: {{ .secretKey }}
-            {{- end }}
+          {{- if .Values.vault.enabled }}
+          volumeMounts:
+            - name: vault-secrets
+              mountPath: /mnt/secrets-store
+              readOnly: true
+          {{- end }}
           livenessProbe:
             httpGet:
               path: {{ .Values.probes.liveness.path }}
@@ -81,3 +82,12 @@ spec:
             periodSeconds: {{ .Values.probes.startup.periodSeconds }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
+      {{- if .Values.vault.enabled }}
+      volumes:
+        - name: vault-secrets
+          csi:
+            driver: secrets-store.csi.k8s.io
+            readOnly: true
+            volumeAttributes:
+              secretProviderClass: {{ include "auth-service.fullname" . }}-vault
+      {{- end }}
