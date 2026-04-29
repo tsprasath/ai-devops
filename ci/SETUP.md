@@ -31,22 +31,30 @@ sudo JENKINS_PORT=8081 JENKINS_ADMIN_USER=admin JENKINS_ADMIN_PASS=admin123 \
 
 After the script completes, open `http://localhost:<PORT>` and log in.
 
-### Post-Install: Create Pipeline Job + Credentials
+### Post-Install: Apply JCasC Configuration
 
-Use the Jenkins CLI to set up the pipeline job, shared library, and credentials without clicking through the UI:
+JCasC auto-creates jobs, credentials, and shared library config on startup. To apply manually:
 
 ```bash
-# Download CLI jar
-curl -sf -o /tmp/jenkins-cli.jar http://localhost:8081/jnlpJars/jenkins-cli.jar
+# Copy JCasC config and set env vars
+sudo cp ci/config/jenkins.yml /var/lib/jenkins/casc_configs/jenkins.yml
 
-# Run the setup groovy (creates shared lib + job + credentials)
-java -jar /tmp/jenkins-cli.jar \
-  -s http://localhost:8081 \
-  -auth admin:admin123 \
-  groovy = < ci/setup-pipeline.groovy
+# Create systemd override with env vars (see ci/config/env.example)
+sudo mkdir -p /etc/systemd/system/jenkins.service.d
+sudo tee /etc/systemd/system/jenkins.service.d/override.conf <<EOF
+[Service]
+Environment="CASC_JENKINS_CONFIG=/var/lib/jenkins/casc_configs/jenkins.yml"
+Environment="JENKINS_ADMIN_PASSWORD=<your-password>"
+Environment="OCI_REGION=ap-mumbai-1"
+Environment="OCIR_URL=bom.ocir.io"
+# ... add all vars from env.example
+EOF
+
+# Restart to apply
+sudo systemctl daemon-reload && sudo systemctl restart jenkins
 ```
 
-Or manually — see sections 2-4 below.
+Verify at: http://localhost:8081/configuration-as-code/
 
 ### Trigger a Build
 
@@ -79,16 +87,16 @@ Manage Jenkins → Plugins → Available:
 
 ### 2. Credentials Setup
 
-Go to: Manage Jenkins → Credentials → System → Global credentials
+All credentials are managed via JCasC (`ci/config/jenkins.yml`) and populated from environment variables. No manual UI setup needed.
 
-| ID                    | Type              | Description                          |
-|-----------------------|-------------------|--------------------------------------|
-| `ocir-credentials`   | Username/Password | OCIR login (tenancy/user + auth token) |
-| `git-credentials`    | Username/Password | GitHub PAT (username + token)        |
-| `teams-webhook-url`  | Secret text       | MS Teams/Slack webhook URL           |
-| `ocir-repo`          | Secret text       | OCIR namespace/repo path             |
-| `oci-region`         | Secret text       | e.g., `ap-mumbai-1`                 |
-| `gitops-repo`        | Secret text       | GitOps repo URL (without https://)   |
+| ID                    | Type              | Env Vars                             | Description                          |
+|-----------------------|-------------------|--------------------------------------|--------------------------------------|
+| `ocir-credentials`   | Username/Password | `OCIR_USERNAME`, `OCIR_PASSWORD`     | OCIR login (tenancy/user + auth token) |
+| `git-credentials`    | Username/Password | `GIT_USERNAME`, `GIT_TOKEN`          | GitHub PAT for repo access & gitops  |
+| `oke-kubeconfig`     | Secret text       | `OKE_KUBECONFIG_B64`                 | OKE cluster kubeconfig (base64)      |
+| `slack-webhook-url`  | Secret text       | `SLACK_WEBHOOK_URL`                  | Slack incoming webhook               |
+| `teams-webhook-url`  | Secret text       | `TEAMS_WEBHOOK_URL`                  | MS Teams incoming webhook            |
+| `sonar-token`        | Secret text       | `SONAR_TOKEN`                        | SonarQube analysis token (optional)  |
 
 ### 3. Shared Library Setup
 
@@ -97,8 +105,9 @@ Go to: Manage Jenkins → System → Global Pipeline Libraries
 ```
 Name:           diksha-dev-lib
 Default version: shared-lib
-Retrieval:      Modern SCM → Git
+Retrieval:      Modern SCM → Git Source
   Project Repo: https://github.com/tsprasath/ai-devops.git
+  Credentials:  git-credentials
 ```
 
 The shared library lives on the orphan branch `shared-lib` (vars/ and src/ at repo root).
@@ -106,27 +115,19 @@ No library path needed since the standard Jenkins layout is at root.
 
 This makes `@Library('diksha-dev-lib') _` available in Jenkinsfiles.
 
-### 4. Pipeline Jobs
+### 4. Pipeline Jobs (via JCasC)
 
-#### Production Job (OKE)
-```
-Job type:     Multibranch Pipeline
-Name:         diksha-auth-service
-Source:       GitHub → tsprasath/ai-devops
-Script Path:  ci/Jenkinsfile
-Branches:     main, develop, release/*
-```
+All jobs are auto-created by JCasC Job DSL in `ci/config/jenkins.yml`. No manual setup needed.
 
-#### Local Dev Job (WSL)
-```
-Job type:     Pipeline
-Name:         ai-devops
-Source:       Pipeline script from SCM
-SCM:          Git → https://github.com/tsprasath/ai-devops.git
-Script Path:  ci/Jenkinsfile.local
-Branch:       */main
-Build triggers: Poll SCM (H/2 * * * *)
-```
+| Job Name                      | Type                | Description                                          |
+|-------------------------------|---------------------|------------------------------------------------------|
+| `service-build-auth-service`  | Pipeline            | Build auth-service, push to OCIR, update GitOps      |
+| `ai-devops-pr`               | Multibranch Pipeline| PR validation — lint, test, scan (no deploy)         |
+| `ai-devops-local`            | Pipeline            | Local/WSL dev pipeline — no K8s, no shared lib       |
+
+#### Adding a New Service Job
+
+Copy the `service-build-auth-service` block in `ci/config/jenkins.yml`, change the job name, default parameters (`APP_REPO_URL`, `SERVICE_NAME`), and apply JCasC.
 
 ### 5. Kubernetes Cloud (for OKE)
 
@@ -147,12 +148,18 @@ Credentials:       kubeconfig or service account
 
 ```
 ci/
-├── setup-jenkins-ubuntu24.sh  # Automated full Jenkins setup (Ubuntu 24.04)
-├── setup-pipeline.groovy      # CLI groovy: shared lib + job + credentials
-├── Jenkinsfile                # Production (K8s agent, shared lib, full pipeline)
-├── Jenkinsfile.local          # Local WSL (agent any, self-contained, graceful skips)
-├── SETUP.md                   # This file
-└── shared-lib/               (on orphan branch 'shared-lib', not on main)
+├── config/
+│   ├── jenkins.yml               # JCasC: jobs, credentials, shared lib, tools (env var interpolation)
+│   └── env.example               # Documents all required environment variables
+├── setup-jenkins-ubuntu24.sh     # Automated full Jenkins setup (Ubuntu 24.04)
+├── Jenkinsfile                   # Production (K8s agent, shared lib, full pipeline)
+├── Jenkinsfile.full              # Full pipeline variant (build + deploy all stages)
+├── Jenkinsfile.pr                # PR validation pipeline
+├── Jenkinsfile.local             # Local WSL (agent any, self-contained, graceful skips)
+├── pod-templates/build-pod.yaml  # Kubernetes pod template for Jenkins agents
+├── templates/                    # Jenkinsfile.app-repo template for onboarding app repos
+├── SETUP.md                      # This file
+└── shared-lib/                  (on orphan branch 'shared-lib', not on main)
     ├── src/org/dev/
     │   └── Constants.groovy   # OCI config, credential IDs, scan thresholds
     └── vars/
