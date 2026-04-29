@@ -13,16 +13,16 @@
 
   Bootstrap (applied once per environment):
   ┌─────────────────────────────────────────────────────────────────────────┐
-  │  infra/bootstrap/overlays/{dev,staging,prod}/                          │
+  │  kubernetes/bootstrap/overlays/{dev,staging,prod}/                          │
   │  ┌────────────┐  ┌───────────────┐  ┌────────────┐  ┌──────────────┐  │
   │  │ Namespaces │  │ OCIR Registry │  │ Resource   │  │ Stakater     │  │
   │  │            │  │ Secrets       │  │ Quotas     │  │ Reloader     │  │
   │  └────────────┘  └───────────────┘  └────────────┘  └──────────────┘  │
   └─────────────────────────────────────────────────────────────────────────┘
 
-  ArgoCD ApplicationSet auto-discovers services from infra/helm-charts/:
+  ArgoCD ApplicationSet auto-discovers services from kubernetes/helm-charts/:
   ┌──────────────────────────────────────────────┐
-  │  infra/helm-charts/                          │
+  │  kubernetes/helm-charts/                          │
   │    auth-service/  →  ArgoCD App (per env)    │
   │    api-service/   →  ArgoCD App (per env)    │
   │    ...            →  ArgoCD App (per env)    │
@@ -68,7 +68,7 @@
 | **staging** | Auto on merge to main          | diksha-app-staging, diksha-monitoring-staging, etc.  | Automatic        |
 | **prod**    | Manual approval in Jenkins     | diksha-app-prod, diksha-monitoring-prod, etc.        | promoteToProd()  |
 
-Bootstrap per environment: `kubectl apply -k infra/bootstrap/overlays/{env}/`
+Bootstrap per environment: `kubectl apply -k kubernetes/bootstrap/overlays/{env}/`
 
 Each environment gets isolated namespaces, resource quotas, and OCIR pull secrets via Kustomize overlays.
 
@@ -84,7 +84,7 @@ Each environment gets isolated namespaces, resource quotas, and OCIR pull secret
 
 ## Infrastructure as Code
 
-Terraform modules in `infra/terraform/`:
+Terraform modules in `kubernetes/terraform/`:
 - **VCN** — Virtual Cloud Network with public/private subnets
 - **OKE** — Oracle Kubernetes Engine cluster
 - **OCIR** — Container registry configuration

@@ -274,7 +274,7 @@ spec:
                             url: env.GITOPS_REPO ?: 'https://github.com/tsprasath/ai-devops.git'
                     }
                     helmLint(
-                        chartPath: "devops/infra/helm-charts/${params.SERVICE_NAME}",
+                        chartPath: "devops/kubernetes/helm-charts/${params.SERVICE_NAME}",
                         strict: true,
                         kubeVersion: '1.28.0',
                         reportDir: 'helm-reports'

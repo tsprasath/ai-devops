@@ -12,7 +12,7 @@ pipeline {
     environment {
         SERVICE      = 'auth-service'
         SERVICE_DIR  = 'services/auth-service'
-        HELM_CHART   = "infra/helm-charts/${SERVICE}"
+        HELM_CHART   = "kubernetes/helm-charts/${SERVICE}"
         OCIR_REGISTRY = 'bom.ocir.io'
         OCIR_NAMESPACE = 'bmzbbujw9kal'
         OCIR_REPO     = 'dev-repo-test'

@@ -14,7 +14,7 @@ spec:
   source:
     repoURL: https://github.com/tsprasath/ai-devops.git
     targetRevision: main
-    path: infra/helm-charts/auth-service
+    path: kubernetes/helm-charts/auth-service
     helm:
       valueFiles:
         - values.yaml           # base defaults

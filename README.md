@@ -23,7 +23,7 @@ DevOps platform repository for the Diksha project. Contains CI pipelines, Helm c
 
   Bootstrap (one-time per env):
   ┌─────────────────────┐
-  │ infra/bootstrap/    │──► Namespaces, OCIR Secrets, ResourceQuotas, Stakater Reloader
+  │ kubernetes/bootstrap/    │──► Namespaces, OCIR Secrets, ResourceQuotas, Stakater Reloader
   │ Kustomize overlays  │    diksha-app-{env}, diksha-monitoring-{env}, diksha-infra-{env}
   └─────────────────────┘
 ```
@@ -40,7 +40,7 @@ ci/
   NOTE: Shared library (vars/, src/) lives on the orphan branch 'shared-lib' in this repo.
         Jenkins loads it via @Library('diksha-dev-lib') pointing to branch 'shared-lib'.
 
-infra/
+kubernetes/
   helm-charts/             Per-service Helm charts with per-env values
     <service>/
       Chart.yaml
@@ -77,16 +77,16 @@ docs/                      Architecture documentation
 
 ```bash
 # Apply namespaces, secrets, quotas, Reloader
-kubectl apply -k infra/bootstrap/overlays/dev/
+kubectl apply -k kubernetes/bootstrap/overlays/dev/
 ```
 
 ### 2. Deploy ArgoCD ApplicationSet
 
 ```bash
-kubectl apply -f infra/argocd-apps/applicationset.yaml
+kubectl apply -f kubernetes/argocd-apps/applicationset.yaml
 ```
 
-ArgoCD auto-discovers every service under `infra/helm-charts/` and creates Application resources per environment.
+ArgoCD auto-discovers every service under `kubernetes/helm-charts/` and creates Application resources per environment.
 
 ### 3. Configure Jenkins
 
@@ -94,7 +94,7 @@ Copy `ci/config/env.example` to your Jenkins environment, fill in values (OCIR c
 
 ## How to Add a New Service (4 Steps)
 
-1. **Create Helm chart**: Add `infra/helm-charts/<service-name>/` with `Chart.yaml`, `templates/`, and `values-dev.yaml`, `values-staging.yaml`, `values-prod.yaml`
+1. **Create Helm chart**: Add `kubernetes/helm-charts/<service-name>/` with `Chart.yaml`, `templates/`, and `values-dev.yaml`, `values-staging.yaml`, `values-prod.yaml`
 2. **Add Jenkinsfile to app repo**: Copy `ci/templates/Jenkinsfile.app-repo` into the app repo root, set the service name parameter
 3. **Create Jenkins job**: Add a parameterized pipeline job pointing to the app repo (one pipeline per service)
 4. **Push**: ArgoCD ApplicationSet auto-detects the new chart directory and creates the deployment

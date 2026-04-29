@@ -102,7 +102,7 @@ pipeline {
                                     image: "${env.OCIR_REPO}/${env.APP_NAME}:${env.GIT_SHORT_SHA}",
                                     scanFilesystem: true,
                                     scanIaC: true,
-                                    iacPaths: ['infra/terraform', 'helm'],
+                                    iacPaths: ['kubernetes/terraform', 'helm'],
                                     reportDir: 'reports/trivy',
                                     failOnCritical: true,
                                     failOnHigh: false

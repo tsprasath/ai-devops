@@ -14,7 +14,7 @@
  *   )
  *
  * Params:
- *   service       - Helm chart directory name under infra/helm-charts/
+ *   service       - Helm chart directory name under kubernetes/helm-charts/
  *   imageTag      - New image tag (e.g., "abc1234-42")
  *   targetEnv     - Environment: dev, staging, prod (default: dev)
  *   gitopsRepo    - Devops repo URL (default: from GITOPS_REPO env var)
@@ -31,7 +31,7 @@ def call(Map config = [:]) {
     def credId      = config.credentialsId ?: 'git-credentials'
     def yamlPath    = config.yamlPath    ?: '.image.tag'
 
-    def valuesFile = "infra/helm-charts/${service}/values-${targetEnv}.yaml"
+    def valuesFile = "kubernetes/helm-charts/${service}/values-${targetEnv}.yaml"
 
     echo "═══════════════════════════════════════════════════"
     echo "GitOps Update: ${service} → ${targetEnv}"

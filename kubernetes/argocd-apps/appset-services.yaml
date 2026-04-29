@@ -1,11 +1,11 @@
 # ═══════════════════════════════════════════════════════
 # ArgoCD ApplicationSet — Auto-discovers Helm charts
 # ═══════════════════════════════════════════════════════
-# For each directory under infra/helm-charts/ that has a Chart.yaml,
+# For each directory under kubernetes/helm-charts/ that has a Chart.yaml,
 # AND for each environment (dev/staging/prod), create an ArgoCD Application.
 #
 # When you add a new service:
-#   1. Create infra/helm-charts/<service-name>/Chart.yaml + values*.yaml
+#   1. Create kubernetes/helm-charts/<service-name>/Chart.yaml + values*.yaml
 #   2. ArgoCD auto-creates the Application — no manual YAML needed
 #
 # This replaces the per-service per-env YAML files in argocd-apps/{env}/.
@@ -36,7 +36,7 @@ spec:
               repoURL: https://github.com/tsprasath/ai-devops.git
               revision: main
               directories:
-                - path: infra/helm-charts/*
+                - path: kubernetes/helm-charts/*
   template:
     metadata:
       name: "{{path.basename}}-{{env}}"
