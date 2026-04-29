@@ -46,22 +46,27 @@ sudo cp <your-kubeconfig> /var/lib/jenkins/secrets/kubeconfig
 sudo chown -R jenkins:jenkins /var/lib/jenkins/secrets
 sudo chmod 600 /var/lib/jenkins/secrets/kubeconfig
 
-# Set only the secret env vars (see ci/config/env.example)
+# Set the JCasC config path and secret env vars
+# Option A: EnvironmentFile (recommended for systemd-managed Jenkins)
+sudo cp ci/config/env.example /var/lib/jenkins/secrets/.env
+sudo vi /var/lib/jenkins/secrets/.env  # fill in real values
+sudo chown jenkins:jenkins /var/lib/jenkins/secrets/.env
+sudo chmod 600 /var/lib/jenkins/secrets/.env
+
 sudo mkdir -p /etc/systemd/system/jenkins.service.d
 sudo tee /etc/systemd/system/jenkins.service.d/override.conf <<EOF
 [Service]
 Environment="CASC_JENKINS_CONFIG=/var/lib/jenkins/casc_configs/jenkins.yml"
-Environment="JENKINS_ADMIN_PASSWORD=your-password"
-Environment="OCIR_USERNAME=tenancy/user"
-Environment="OCIR_PASSWORD=your-auth-token"
-Environment="GIT_TOKEN=ghp_xxxxxxxxxxxx"
-Environment="SLACK_WEBHOOK_URL=https://hooks.slack.com/services/XXX/YYY/ZZZ"
-Environment="TEAMS_WEBHOOK_URL=https://outlook.office.com/webhook/XXX"
-Environment="SONAR_TOKEN=sqp_xxxxxxxxxxxx"
+EnvironmentFile=/var/lib/jenkins/secrets/.env
 EOF
 
 # Restart to apply
 sudo systemctl daemon-reload && sudo systemctl restart jenkins
+
+# Option B: Kubernetes Secret (recommended for OKE/container deployments)
+# Create a K8s Secret with the env vars from env.example, mount as env in the
+# Jenkins pod spec. JCasC picks them up automatically — no systemd needed.
+# See: kubernetes/helm-charts/ for Helm-based Jenkins deployment.
 ```
 
 Non-secret values (OCI region, OCIR URL, repo URLs, Slack channels, Trivy thresholds, KUBECONFIG path) are hardcoded directly in `jenkins.yml` — no env vars needed for those.
@@ -244,7 +249,8 @@ java -jar /tmp/jenkins-cli.jar -s http://localhost:8081 \
 ```
 
 ### JCasC not applying
-- Verify `CASC_JENKINS_CONFIG` env var is set: check `/etc/systemd/system/jenkins.service.d/override.conf`
+- Verify `CASC_JENKINS_CONFIG` env var is set: `systemctl show jenkins | grep CASC`
+- Verify secrets loaded: `systemctl show jenkins | grep EnvironmentFile`
 - Check Jenkins logs: `journalctl -u jenkins -f`
 - Validate config at: http://localhost:8081/configuration-as-code/
 
