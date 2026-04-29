@@ -1,3 +1,4 @@
+// DEPRECATED: Use JCasC (ci/config/jenkins.yml) instead. This script is kept as a legacy fallback.
 // setup-pipeline.groovy — Run via Jenkins CLI to create shared lib, pipeline job, and credentials
 // Usage: java -jar jenkins-cli.jar -s http://localhost:$PORT -auth $USER:$PASS groovy = < ci/setup-pipeline.groovy
 // Credentials are passed via Java system properties (-D flags) from the setup script.
@@ -19,7 +20,7 @@ def libConfig = instance.getDescriptor("org.jenkinsci.plugins.workflow.libs.Glob
 def scm = new GitSCMSource("diksha-dev-lib", "https://github.com/tsprasath/ai-devops.git", "", "*", "", true)
 def retriever = new SCMSourceRetriever(scm)
 def lib = new LibraryConfiguration("diksha-dev-lib", retriever)
-lib.setDefaultVersion("main")
+lib.setDefaultVersion("shared-lib")
 lib.setImplicit(false)
 lib.setAllowVersionOverride(true)
 libConfig.get().setLibraries([lib])

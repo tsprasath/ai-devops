@@ -37,6 +37,10 @@ coverage/
 *.log
 
 # Secrets
-*secret*
+*.key
+*.pem
+.env.secret
+secrets/
 !.env.example
 !security/
+!kubernetes/bootstrap/base/registry-secret.yaml

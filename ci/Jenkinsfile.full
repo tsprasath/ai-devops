@@ -1,4 +1,4 @@
-@Library('dev-shared-lib') _
+@Library('diksha-dev-lib') _
 
 import org.dev.Constants
 
@@ -10,10 +10,30 @@ pipeline {
         }
     }
 
+    parameters {
+        string(name: 'SERVICE_NAME',
+               defaultValue: 'auth-service',
+               description: 'Service name (matches Helm chart dir in devops repo)')
+        string(name: 'APP_REPO_URL',
+               defaultValue: 'https://github.com/tsprasath/sample-test-app.git',
+               description: 'Application source code repository URL')
+        string(name: 'APP_REPO_BRANCH',
+               defaultValue: 'main',
+               description: 'Branch to build from')
+        string(name: 'SERVICE_DIR',
+               defaultValue: '.',
+               description: 'Path to service root in app repo (Dockerfile location)')
+    }
+
     environment {
+        OCIR_URL     = Constants.OCIR_URL
+        OCIR_NS      = Constants.OCIR_NAMESPACE
+        PROJECT      = Constants.PROJECT_NAME
+        OCIR_CRED_ID = Constants.OCIR_CREDENTIALS_ID
         OCIR_REPO    = "${Constants.OCIR_REPO}"
-        APP_NAME     = "${Constants.PROJECT_NAME}"
-        GITOPS_REPO  = "https://github.com/diksha/dev-gitops.git"
+        APP_NAME     = "${params.SERVICE_NAME ?: Constants.PROJECT_NAME}"
+        IMAGE_NAME   = "${OCIR_URL}/${OCIR_NS}/${PROJECT}/${params.SERVICE_NAME}"
+        GITOPS_REPO  = "${env.GITOPS_REPO ?: 'https://github.com/tsprasath/ai-devops.git'}"
     }
 
     options {
@@ -54,7 +74,7 @@ pipeline {
                         container('helm') {
                             script {
                                 helmLint(
-                                    chartPath: 'helm/app',
+                                    chartPath: "kubernetes/helm-charts/${env.APP_NAME}",
                                     reportDir: 'reports/helm'
                                 )
                             }
@@ -79,13 +99,15 @@ pipeline {
             }
         }
 
-        stage('Build Docker Image') {
+        stage('Build & Push') {
             steps {
-                container('kaniko') {
+                container('docker') {
                     script {
-                        env.BUILD_RESULT = dockerBuild(
-                            imageName: env.APP_NAME,
-                            registry: env.OCIR_REPO
+                        buildAndPush(
+                            imageName: "${PROJECT}/${params.SERVICE_NAME}",
+                            imageTag: "${env.IMAGE_TAG}",
+                            registry: "${OCIR_URL}/${OCIR_NS}",
+                            credentialsId: "${OCIR_CRED_ID}"
                         )
                     }
                 }
@@ -99,7 +121,7 @@ pipeline {
                         container('trivy') {
                             script {
                                 trivyScan(
-                                    image: "${env.OCIR_REPO}/${env.APP_NAME}:${env.GIT_SHORT_SHA}",
+                                    image: "${env.OCIR_REPO}/${env.APP_NAME}:${env.IMAGE_TAG}",
                                     scanFilesystem: true,
                                     scanIaC: true,
                                     iacPaths: ['kubernetes/terraform', 'helm'],
@@ -125,41 +147,16 @@ pipeline {
             }
         }
 
-        stage('Push to OCIR') {
-            steps {
-                container('kaniko') {
-                    withCredentials([usernamePassword(
-                        credentialsId: Constants.OCIR_CREDENTIALS_ID,
-                        usernameVariable: 'OCIR_USER',
-                        passwordVariable: 'OCIR_PASS'
-                    )]) {
-                        sh """
-                            echo \$OCIR_PASS | docker login ${Constants.OCIR_URL} -u \$OCIR_USER --password-stdin
-                            docker push ${env.OCIR_REPO}/${env.APP_NAME} --all-tags
-                        """
-                    }
-                }
-            }
-        }
-
         stage('Update GitOps') {
             steps {
-                container('kubectl') {
+                container('yq') {
                     script {
                         def targetEnv = (env.BRANCH_NAME == 'main') ? 'staging' : 'dev'
-                        echo "Updating GitOps for ${targetEnv} with tag ${env.GIT_SHORT_SHA}"
-                        dir('gitops') {
-                            git branch: 'main',
-                                credentialsId: Constants.GITHUB_TOKEN_CREDENTIAL,
-                                url: env.GITOPS_REPO
-                            sh """
-                                cd overlays/${targetEnv}
-                                sed -i 's|newTag:.*|newTag: ${env.GIT_SHORT_SHA}|' kustomization.yaml
-                                git add -A
-                                git commit -m "${targetEnv}: deploy ${env.APP_NAME}:${env.GIT_SHORT_SHA}"
-                                git push origin main
-                            """
-                        }
+                        gitopsUpdate(
+                            service: params.SERVICE_NAME,
+                            imageTag: "${env.IMAGE_TAG}",
+                            targetEnv: targetEnv
+                        )
                     }
                 }
             }
@@ -170,13 +167,18 @@ pipeline {
                 branch 'release/*'
             }
             steps {
-                script {
-                    promoteToProd(
-                        gitopsRepo: env.GITOPS_REPO,
-                        imageTag: env.GIT_SHORT_SHA,
-                        smokeTestUrl: "https://staging.example.com",
-                        timeoutMinutes: 30
-                    )
+                container('yq') {
+                    script {
+                        promoteToProd(
+                            service: params.SERVICE_NAME,
+                            gitopsRepo: env.GITOPS_REPO,
+                            imageTag: env.IMAGE_TAG,
+                            fromEnv: 'staging',
+                            toEnv: 'prod',
+                            smokeTestUrl: "${env.SMOKE_TEST_URL ?: ''}",
+                            timeoutMinutes: 30
+                        )
+                    }
                 }
             }
         }
