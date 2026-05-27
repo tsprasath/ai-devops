@@ -1,0 +1,31 @@
+# DEV overrides
+replicaCount: 1
+
+image:
+  repository: ghcr.io/tsprasath/diksha/sample-app
+  tag: "latest"   # Updated by Jenkins/CI pipeline
+  pullPolicy: Always
+
+ingress:
+  enabled: true
+  hosts:
+    - host: sample-app.diksha.local
+      paths:
+        - path: /
+          pathType: Prefix
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 200m
+    memory: 256Mi
+
+env:
+  - name: NODE_ENV
+    value: development
+  - name: PORT
+    value: "8080"
+  - name: LOG_LEVEL
+    value: debug

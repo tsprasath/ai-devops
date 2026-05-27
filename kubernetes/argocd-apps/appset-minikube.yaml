@@ -1,0 +1,71 @@
+# ═══════════════════════════════════════════════════════
+# ArgoCD ApplicationSet — Minikube / Local Dev
+# ═══════════════════════════════════════════════════════
+# Targets: minikube cluster, dev namespace, ghcr.io registry
+# Auto-sync enabled for dev (fast feedback loop)
+# ═══════════════════════════════════════════════════════
+
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: diksha-dev-minikube
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - matrix:
+        generators:
+          - list:
+              elements:
+                - env: dev
+                  namespace: diksha-app-dev
+                  revision: feature/split-repo-gitops
+                  auto_sync: "true"
+          - git:
+              repoURL: https://github.com/tsprasath/ai-devops.git
+              revision: feature/split-repo-gitops
+              directories:
+                - path: kubernetes/helm-charts/*
+  template:
+    metadata:
+      name: "{{ .path.basename }}-{{ .env }}"
+      namespace: argocd
+      labels:
+        app.kubernetes.io/name: "{{ .path.basename }}"
+        app.kubernetes.io/part-of: diksha
+        diksha.dev/environment: "{{ .env }}"
+      finalizers:
+        - resources-finalizer.argocd.argoproj.io
+    spec:
+      project: default
+      source:
+        repoURL: https://github.com/tsprasath/ai-devops.git
+        targetRevision: "{{ .revision }}"
+        path: "{{ .path.path }}"
+        helm:
+          valueFiles:
+            - values.yaml
+            - "values-{{ .env }}.yaml"
+          parameters:
+            - name: image.tag
+              value: "latest"
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: "{{ .namespace }}"
+      syncPolicy:
+        {{- if eq .auto_sync "true" }}
+        automated:
+          prune: true
+          selfHeal: true
+        {{- end }}
+        syncOptions:
+          - CreateNamespace=true
+          - PrunePropagationPolicy=foreground
+          - ServerSideApply=true
+        retry:
+          limit: 5
+          backoff:
+            duration: 10s
+            factor: 2
+            maxDuration: 5m

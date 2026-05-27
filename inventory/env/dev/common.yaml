@@ -1,0 +1,54 @@
+# ═══════════════════════════════════════════════════════
+# DEV Environment — Common Values
+# Used by: Helm deploys, Jenkins pipelines, ArgoCD appsets
+# ═══════════════════════════════════════════════════════
+
+environment: dev
+namespace: diksha-app-dev
+cluster: minikube
+
+# Docker registry (GitHub Container Registry for test/local)
+registry:
+  url: ghcr.io
+  namespace: tsprasath     # your GitHub username
+  project: diksha
+
+# ArgoCD source
+gitops:
+  repoURL: https://github.com/tsprasath/ai-devops.git
+  targetRevision: feature/split-repo-gitops
+
+# Default image pull policy for dev
+image:
+  pullPolicy: Always
+  pullSecret: ghcr-registry
+
+# Reloader — restart pods on secret/configmap changes
+reloader:
+  enabled: true
+  watchGlobally: true
+
+# Resource defaults for dev (smaller than prod)
+resources:
+  requests:
+    cpu: "100m"
+    memory: "128Mi"
+  limits:
+    cpu: "500m"
+    memory: "512Mi"
+
+# Ingress (minikube ingress addon)
+ingress:
+  enabled: true
+  className: nginx
+  domain: diksha.local
+
+# Replica count for dev
+replicaCount: 1
+
+# Health check defaults
+healthCheck:
+  path: /health
+  port: 8080
+  initialDelaySeconds: 10
+  periodSeconds: 10

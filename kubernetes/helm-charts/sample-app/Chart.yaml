@@ -1,0 +1,13 @@
+apiVersion: v2
+name: sample-app
+description: Sample application Helm chart for DIKSHA dev
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+keywords:
+  - diksha
+  - sample
+  - nodejs
+maintainers:
+  - name: prasath
+    email: prasath@diksha.gov.in

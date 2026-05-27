@@ -44,3 +44,9 @@ secrets/
 !.env.example
 !security/
 !kubernetes/bootstrap/base/registry-secret.yaml
+
+# Local secrets — never commit
+inventory/env/*/secrets.local.yaml
+ci/config/.env
+*.local.yaml
+*.local.env
